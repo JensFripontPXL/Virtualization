@@ -141,14 +141,14 @@ curl http://192.168.112.100:2375/version
 #
 # OPLOSSING: Passwordless SSH setup met SSH keys
 
-# A. Op CLIENT/Windows VMware Host: SSH key genereren (indien nog niet bestaat)
-ssh-keygen -t rsa -b 4096 -f ~/.ssh/id_rsa
+# A. Op Windows VMware Host: SSH key genereren (indien nog niet bestaat)
+ssh-keygen -t rsa -b 4096 -f ./.ssh/id_rsa
 # Druk Enter (geen passphrase) voor volledig passwordless
 
-# B. Public key kopiëren naar server:
-ssh-copy-id student@serverJF
-# Of handmatig:
-cat ~/.ssh/id_rsa.pub | ssh student@serverJF "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
+# B. Public key kopiëren naar server (Windows host):
+
+# PowerShell:
+Get-Content $env:USERPROFILE\.ssh\id_rsa.pub | ssh student@192.168.112.100 "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
 
 # C. Permissies controleren op server:
 ssh student@serverJF
@@ -157,7 +157,7 @@ chmod 600 ~/.ssh/authorized_keys
 exit
 
 # D. Verificatie: SSH zonder wachtwoord
-ssh student@serverJF
+ssh student@192.168.112.100
 # Zou nu zonder wachtwoord moeten werken
 
 # E. Troubleshooting: Op server SSH config checken
@@ -174,52 +174,66 @@ sudo systemctl restart sshd
 #
 # OPLOSSING:
 
-# OPTIE A: Linux Desktop (GNOME/KDE):
-# A1. Desktop entry bestand maken:
-nano ~/Desktop/ServerJF.desktop
+# OPTIE A: Windows - SSH shortcut met .bat bestand:
+# A1. Maak een batch bestand op het bureaublad:
+# - Open Kladblok (Notepad)
+# - Plak onderstaande inhoud:
 
-# A2. Inhoud:
-# [Desktop Entry]
-# Version=1.0
-# Type=Application
-# Name=ServerJF
-# Comment=SSH naar ServerJF
-# Exec=gnome-terminal -- ssh student@serverJF
-# Icon=utilities-terminal
-# Terminal=false
-# Categories=Network;
+@echo off
+ssh student@192.168.112.100
+pause
 
-# A3. Executable maken:
-chmod +x ~/Desktop/ServerJF.desktop
+# - Sla op als: C:\Users\<jouw-gebruikersnaam>\Desktop\ServerJF.bat
+# - Zorg dat "Opslaan als type" op "Alle bestanden" staat
+
+# A2. Test de shortcut door erop te dubbelklikken
 
 
-# OPTIE B: Windows (indien VMware Host Windows is):
-# B1. Maak .bat bestand:
-# Rechtermuisknop op bureaublad > Nieuw > Tekstbestand
-# Naam: ServerJF.bat
-# Inhoud:
-# @echo off
-# ssh student@serverJF
-# pause
+# OPTIE B: Windows - PowerShell shortcut:
+# B1. Maak een PowerShell script:
+# - Open Kladblok
+# - Plak:
 
-# B2. Of .rdp shortcut voor SSH (met PuTTY):
-# Installeer PuTTY
-# Maak shortcut met target:
-# "C:\Program Files\PuTTY\putty.exe" -ssh student@192.168.112.100 -i "C:\path\to\privatekey.ppk"
+# PowerShell SSH shortcut
+ssh student@192.168.112.100
+
+# - Sla op als: C:\Users\<jouw-gebruikersnaam>\Desktop\ServerJF.ps1
+
+# B2. Maak een snelkoppeling naar PowerShell:
+# - Rechtermuisknop op bureaublad > Nieuw > Snelkoppeling
+# - Locatie: powershell.exe -ExecutionPolicy Bypass -File "%USERPROFILE%\Desktop\ServerJF.ps1"
+# - Naam: ServerJF
 
 
-# OPTIE C: SSH config shortcut (meest elegante oplossing):
-# C1. Bewerk ~/.ssh/config:
-nano ~/.ssh/config
+# OPTIE C: Windows - SSH config (meest elegante oplossing):
+# C1. Open PowerShell en bewerk SSH config:
+notepad $HOME\.ssh\config
 
-# C2. Voeg toe:
+# C2. Voeg toe aan het bestand:
 # Host serverJF
 #     HostName 192.168.112.100
 #     User student
-#     IdentityFile ~/.ssh/id_rsa
+#     IdentityFile C:\Users\<jouw-gebruikersnaam>\.ssh\id_rsa
 
-# C3. Nu werkt simpelweg:
+# C3. Sla op en nu werkt simpelweg:
 ssh serverJF
+
+# C4. Maak een batch bestand voor de shortcut:
+# Inhoud van ServerJF.bat:
+# @echo off
+# ssh serverJF
+# pause
+
+
+# OPTIE D: Windows - Windows Terminal profiel (modern):
+# D1. Open Windows Terminal
+# D2. Ga naar Instellingen (Ctrl+,)
+# D3. Klik op "Nieuw profiel toevoegen"
+# D4. Configureer:
+#     Naam: ServerJF
+#     Opdrachtregel: ssh student@192.168.112.100
+#     Pictogram: kies een SSH icoon
+# D5. Sla op en gebruik het profiel vanuit het dropdown menu
 
 
 # ============================================
@@ -271,7 +285,7 @@ podman images -q
 # De container stopt automatisch na het uitvoeren van de opdracht.
 #
 # OPLOSSING:
-podman run --rm registry.access.redhat.com/ubi10/ubi:latest cat /etc/hosts
+podman run -rm registry.access.redhat.com/ubi10/ubi:latest cat /etc/hosts
 # --rm zorgt dat container automatisch verwijderd wordt na stoppen
 
 
@@ -282,11 +296,6 @@ podman run --rm registry.access.redhat.com/ubi10/ubi:latest cat /etc/hosts
 # OPLOSSING:
 # A. Start interactieve container:
 podman run -it --name myubi registry.access.redhat.com/ubi10/ubi:latest /bin/bash
-
-# B. In de container: druk CTRL+P gevolgd door CTRL+Q (detach zonder stoppen)
-# Of gebruik in aparte terminal:
-podman exec -it myubi /bin/bash
-
 
 # OPGAVE 7:
 # Start de Universal Base Image als een container die op de achtergrond blijft draaien.
@@ -309,6 +318,7 @@ podman run -d --name ubi-bg5 registry.access.redhat.com/ubi10/ubi:latest cat
 
 # Verificatie:
 podman ps
+
 
 
 # OPGAVE 8:
@@ -455,583 +465,570 @@ podman images  # Zou leeg moeten zijn
 # OEFENING 3 - Podman Interactieve Container & Webserver
 # ============================================
 
-# OPGAVE 1:
-# Start een container met de httpd-24 image op de achtergrond.
-# De webserver moet bereikbaar zijn op poort 8080 van de host.
-#
-# OPLOSSING:
-podman run -d --name myhttpd -p 8080:80 registry.access.redhat.com/ubi10/httpd-24:latest
+# Volg exact de commands uit de screenshots hieronder. Deze zijn plain commands
+# (geen comments) zodat je ze kunt copy/pasten en uitvoeren.
 
-# Verificatie:
-podman ps
-curl http://localhost:8080
-# Of vanaf host browser: http://<server-ip>:8080
+# 1.	Verwijder alle containers en container images en images van de user root. Maak gebruik van zo weinig mogelijk karakters.
+podman rm -a -f ; podman rmi -a -f
 
+# 2.	Download eerst de Red Hat ubi10-init container image en start daarna een container afgeleid van deze image op de achtergrond (detached)
+#       met een poortbinding die poort 80 van de container koppelt aan poort 80 op de host.
+podman pull registry.access.redhat.com/ubi10/ubi-init:latest
+sudo podman run -d -p 80:80 --name Httpd10 --hostname Httpd10 registry.access.redhat.com/ubi10/ubi-init:latest tail -f /dev/null
 
-# OPGAVE 2:
-# Maak verbinding met de draaiende httpd container en bekijk de configuratie bestanden.
-#
-# OPLOSSING:
-# A. Interactieve shell in container:
-podman exec -it myhttpd /bin/bash
+# Open firewall port 80 voor toegang
+sudo firewall-cmd --add-port=80/tcp --permanent
+sudo firewall-cmd --reload
 
-# B. In de container: bekijk configuratie
-cat /etc/httpd/conf/httpd.conf
-ls -la /var/www/html/
-cat /var/www/html/index.html
+# 3.	Installeer httpd in de container die je juist gestart bent. Je mag maar één commando gebruiken.
+sudo podman exec -it Httpd10 dnf install -y httpd
 
-# C. Exit container:
+# Start httpd in de container
+sudo podman exec -d Httpd10 httpd -DFOREGROUND
+
+# 4.	Stel in dat je eigen voor- en achternaam getoond worden wanneer http://192.168.112.100 wordt ingegeven in de browser van de container host. 
+# Doe dit door eerst in te breken in de container en dan index.html aan te maken met de juiste inhoud.
+sudo podman exec -it Httpd10 bash
+echo "<h1>Jens Fripont</h1>" > /var/www/html/index.html
+exit
+# Controleer of de inhoud correct is.
+sudo podman exec Httpd10 cat /var/www/html/index.html
+# Controleer of de webserver correct is geïnstalleerd.
+sudo podman exec Httpd10 ps aux | grep httpd 
+curl http://192.168.112.100
+# 5.	Ga uit de container en start de webserver op voor te testen.  
+exit
+sudo podman exec -d Httpd10 httpd -DFOREGROUND
+# 6.	Ga naar een ander terminalvenster en vraag de webpagina op met curl.
+curl http://192.168.112.100
+# Controleer of je naam en voornaam getoond worden.
+# Indien dit niet het geval is, controleer je stappen en los je problemen op.
+# maak een SSH-tunnel van je laptop naar serverJF voor poort 80 indien nodig om de webpagina te kunnen opvragen in een volgend onderdeel.
+ssh -L 8080:localhost:80 student@serverJF
+# 7.	Stel in dat de container automatisch de webserver opstart wanneer de container start. Maak hiervoor gebruik van systemctl.
+sudo podman exec -it Httpd10 bash
+systemctl enable httpd
 exit
 
+# 8.	Stop de container en maak een container image met de naam webserver en tag v1 van de container.
+sudo podman stop Httpd10
+sudo podman commit Httpd10 webserver:v1
+sudo podman run -d -p 80:80 --name Httpd10 localhost/webserver:v1
 
-# OPGAVE 3:
-# Pas de webpagina aan zodat deze een custom boodschap toont.
-#
-# OPLOSSING:
-# METHODE 1: Direct vanaf host:
-echo "<h1>Welkom bij mijn Podman Webserver!</h1>" | podman exec -i myhttpd tee /var/www/html/index.html
-
-# METHODE 2: Via interactieve shell:
-podman exec -it myhttpd bash
-echo "<h1>Custom Webserver</h1><p>Door student JF</p>" > /var/www/html/index.html
+# 9.	Toon enkel het image webserver:v1.
+sudo podman images webserver:v1
+# Controleer of het image webserver:v1 de juiste inhoud heeft.
+sudo podman run -it --rm webserver:v1 bash -c "cat /var/www/html/index.html"
+<h1>Fripont Jens</h1>
 exit
+# Nu kan je de webpagina opvragen via http://localhost:8080 op je laptop.
+# dit werkt zo niet je moet eerste de oude container verwijderen
+sudo podman rm -f Httpd10 2>/dev/null || true
+sudo podman run -d -p 80:80 --name Httpd10 localhost/webserver:v1 httpd -DFOREGROUND
+# 10.	Verwijder de webserver-container die draait met één commando.
+sudo podman rm -f Httpd10
 
-# Verificatie:
-curl http://localhost:8080
+# 11.	Check dat er niet geluisterd wordt naar aanvragen op poort 80.
+ss -tuln | grep :80
 
+# 12.	Maak een container aan afgeleid van jouw opgeslagen container image. De container moet op de container host draaien op poort 90. 
+# Je moet de container detached starten.
+sudo podman run -d -p 90:80 --name Httpd90 webserver:v1 tail -f /dev/null
 
-# OPGAVE 4:
-# Start een tweede container met nginx en maak deze bereikbaar op poort 8081.
-#
-# OPLOSSING:
-podman run -d --name mynginx -p 8081:80 docker.io/library/nginx:latest
+# 13.	Vraag nu de webpagina die je naam en voornaam toont op aan de hand van de container die je juist gestart bent.
+sudo firewall-cmd --add-port=90/tcp --permanent
+sudo firewall-cmd --reload
+curl http://localhost:90
 
-# Verificatie:
-podman ps
-curl http://localhost:8081
+# Controleer of je naam en voornaam getoond worden.
+sudo podman exec -d Httpd90 httpd -DFOREGROUND # start de webserver in de container
+sudo podman exec Httpd90 ss -tuln | grep :80 # controleer of de webserver luistert
+sudo podman exec Httpd90 curl -sS http://localhost # controleer of de webpagina correct is
+curl -v http://localhost:90 # controleer of de webpagina correct is
 
-
-# OPGAVE 5:
-# Test de communicatie tussen de twee containers (httpd en nginx).
-#
-# OPLOSSING:
-# A. Van nginx container naar httpd:
-podman exec -it mynginx bash
-apt-get update && apt-get install -y curl
-curl http://host.containers.internal:8080
-exit
-
-# B. Van httpd naar nginx:
-podman exec -it myhttpd bash
-dnf install -y curl
-curl http://host.containers.internal:8081
-exit
-
-# UITLEG: 
-# host.containers.internal is een speciale hostname die verwijst naar de host
-# Containers kunnen via host ports met elkaar communiceren
+# 14.	Zorg ervoor dat de website beschikbaar is op clientAS. 
+# Hiervoor moet je de firewall op serverAS aanpassen.
+sudo firewall-cmd --add-port=90/tcp --permanent
+sudo firewall-cmd --reload
 
 
-# OPGAVE 6:
-# Stop en verwijder beide containers.
-#
-# OPLOSSING:
-podman stop myhttpd mynginx
-podman rm myhttpd mynginx
-
-# Of in één commando:
-podman rm -f myhttpd mynginx
-
-# Verificatie:
-podman ps -a
+# 15.	Vraag op clientAS de webpagina van de container op serverAS op.
+curl http://serverJF:90
+# Controleer of je naam en voornaam getoond worden.
+# 16.	Verwijder alle containers en container images en images van de user root. Maak gebruik van zo weinig mogelijk karakters.
+sudo podman rm -a -f ; sudo podman rmi -a -f
 
 
 # ============================================
 # OEFENING 4 - Podman Dockerfiles/Containerfiles
 # ============================================
+# OPGAVE
+# OEFENING 4 - Podman Dockerfiles/Containerfiles
+# ============================================
 
 # OPGAVE 1:
-# Maak een Containerfile voor een DNS server met BIND.
-# De container moet:
-# - Gebruik maken van ubi10/ubi-init als basis image
-# - BIND installeren
-# - Configuratie bestanden bevatten
-# - Automatisch de DNS server starten
-#
+# 1.	Voer deze oefening uit in de map oef1<jeintialen> waarin je de containerfile opslaat. 
+# Bouw een containerfile met de naam containerfile1 voor een webserver gebaseerd op registry.access.redhat.com/ubi10/ubi.
+# De website moet je eigen voor- en achternaam tonen.
+# De imagenaam noemt localhost/mijnwww<jeinitialeninkleineletters>.
+# De container die je van de image afleidt noemt oef1<jeintialen>.
+# De website moet op de containerhost beschikbaar zijn op poort 8081. 
+# Laat uiteraard ook, zoals bij alle vragen, je resultaat zien. 
+
 # OPLOSSING:
+# A. Directory maken en naar toe gaan:
+mkdir -p oef1jf
+cd oef1jf
 
-# A. Directory structuur maken:
-mkdir -p ~/oefening/scripts
-cd ~/oefening
+# B. Containerfile maken:
+nano containerfile1
+FROM registry.access.redhat.com/ubi10/ubi:latest
+RUN dnf -y install httpd && dnf clean all
+COPY index.html /var/www/html/index.html
+EXPOSE 80
+CMD ["httpd","-DFOREGROUND"]
 
-# B. Maak het Containerfile:
-nano Dockerfile
-# Inhoud:
-# FROM registry.access.redhat.com/ubi10/ubi-init
-# 
-# # Bind + tools installeren
-# RUN dnf -y install bind bind-utils procps-ng && dnf clean all
-# 
-# # Config & zone files
-# COPY scripts/named.conf /etc/named.conf
-# COPY scripts/abc.pri /var/named/abc.pri
-# 
-# # Vereiste directories + juiste rechten
-# RUN mkdir -p /var/named \
-#  && chown named:named /var/named \
-#  && chmod 0750 /var/named \
-#  && chown named:named /var/named/abc.pri /etc/named.conf \
-#  && chmod 0640 /var/named/abc.pri /etc/named.conf
-# 
-# # Zorgt dat netjes gestopt wordt
-# STOPSIGNAL SIGTERM
-# 
-# # Uitvoeren bij initialiseren container
-# ENTRYPOINT ["/usr/sbin/named", "-g", "-u", "named", "-c", "/etc/named.conf"]
-# 
-# # Healthcheck (wordt named uitgevoerd)
-# HEALTHCHECK --interval=30s --timeout=5s --retries=3 CMD \
-#   pgrep named >/dev/null || exit 1
+# C. Index.html maken:
+echo "<h1>Jens Fripont</h1>" > index.html
 
-# C. Maak named.conf:
-nano scripts/named.conf
-# Inhoud:
-# options {
-#     directory "/var/named";
-#     listen-on port 53 { any; };
-#     allow-query { any; };
-#     recursion yes;
-#     allow-recursion { any; };
-#     forwarders { 8.8.8.8; 8.8.4.4; };
-#     forward only;
-#     dnssec-validation no;
-# };
-# 
-# zone "abc.pri" {
-#     type master;
-#     file "abc.pri";
-# };
+# D. Image bouwen:
+podman build -t localhost/mijnwwwjf -f containerfile1 .
 
-# D. Maak zone file:
-nano scripts/abc.pri
-# Inhoud:
-# $TTL 8h
-# $ORIGIN abc.pri.
-# @   IN  SOA ns1.abc.pri. hostmaster.abc.pri. (
-#         2025031701 ; serial (YYYYMMDDnn)
-#         1d         ; refresh
-#         3h         ; retry
-#         3d         ; expire
-#         3h         ; minimum TTL
-# )
-#     IN  NS  ns1.abc.pri.
-# ns1 IN  A   127.0.0.1
-# host IN  A   192.168.1.100
+# E. Container starten:
+podman run -d --name oef1jf -p 8081:80 localhost/mijnwwwjf
 
+# F. Firewall aanpassen (indien nodig):
+sudo firewall-cmd --add-port=8081/tcp --permanent
+sudo firewall-cmd --reload
 
-# OPGAVE 2:
-# Build de DNS container image.
-#
+# G. Verificatie:
+podman images | grep mijnwwwjf
+podman ps | grep oef1jf
+curl http://localhost:8081
+# Zou "<h1>Jens Fripont</h1>" moeten tonen
+
+# 2.	Voer deze oefening uit in de map oef2<jeintialen> waarin je de containerfile opslaat. 
+# Bouw een containerfile met de naam containerfile2 voor een webserver gebaseerd op registry.access.redhat.com/ubi10/ubi-init.
+# De website moet je eigen voor- en achternaam tonen.
+# De imagenaam noemt localhost/mijnwww2<jeinitialeninkleineletters>.
+# De container die je van de image afleidt noemt oef2<jeinitialen>. 
+# Maak de image ingelogd als de gebruiker student.
+# De website moet op de containerhost beschikbaar zijn op poort 80. 
+# Zorg ervoor dat PID1 init is.
+
 # OPLOSSING:
-cd ~/oefening
-podman build --format=docker -t contdns .
+# A. Directory maken en naar toe gaan:
+mkdir -p oef2jf
+cd oef2jf
 
-# Met --no-cache voor fresh build:
-podman build --format=docker --no-cache -t contdns .
+# B. Containerfile maken:
+nano containerfile2
 
-# Verificatie:
-podman images | grep contdns
-
-
-# OPGAVE 3:
-# Start de DNS container en test of deze werkt.
-#
-# OPLOSSING:
-# A. Container starten met poort mapping:
-podman run -d --name contdns --hostname contdns -p 1053:53/udp -p 1053:53/tcp contdns
-
-# Verificatie container draait:
-podman ps
-
-# B. Testen met dig:
-dig @127.0.0.1 -p 1053 host.abc.pri
-
-# C. Testen met nslookup:
-nslookup host.abc.pri 127.0.0.1 -port=1053
-
-# D. Healthcheck status bekijken:
-podman inspect contdns | grep -A 10 Health
-
-
-# OPGAVE 4:
-# Maak een Containerfile voor een webserver met custom content.
-# De webserver moet een custom HTML pagina tonen.
-#
-# OPLOSSING:
-
-# A. Nieuwe directory:
-mkdir -p ~/webserver/content
-cd ~/webserver
-
-# B. Custom HTML maken:
-nano content/index.html
-# Inhoud:
-# <!DOCTYPE html>
-# <html>
-# <head>
-#     <title>Mijn Container Webserver</title>
-# </head>
-# <body>
-#     <h1>Welkom!</h1>
-#     <p>Deze pagina draait in een container gebouwd met Podman.</p>
-# </body>
-# </html>
-
-# C. Containerfile maken:
-nano Dockerfile
-# Inhoud:
-# FROM registry.access.redhat.com/ubi10/httpd-24
+# Inhoud van containerfile2:
+# FROM registry.access.redhat.com/ubi10/ubi-init:latest
 # 
-# # Custom HTML kopiëren
-# COPY content/index.html /var/www/html/
+# RUN dnf install -y httpd && dnf clean all
 # 
-# # Juiste rechten
-# RUN chown -R apache:apache /var/www/html
+# COPY index.html /var/www/html/index.html
 # 
-# # Poort 80 exposen
 # EXPOSE 80
 # 
-# # Webserver starten
-# CMD ["/usr/bin/httpd", "-D", "FOREGROUND"]
+# CMD ["/usr/sbin/httpd", "-D", "FOREGROUND"]
 
+# C. Index.html maken:
+echo "<h1>Jens Fripont</h1>" > index.html
 
-# OPGAVE 5:
-# Build en start de webserver container.
-#
+# D. Image bouwen als student:
+sudo -u student podman build -t localhost/mijnwww2jf -f containerfile2 .
+
+# E. Container starten:
+sudo -u student podman run -d --name oef2jf -p 80:80 localhost/mijnwww2jf
+
+# F. Firewall aanpassen (indien nodig):
+sudo firewall-cmd --add-port=80/tcp --permanent
+sudo firewall-cmd --reload
+
+# G. Verificatie:
+sudo -u student podman images | grep mijnwww2jf
+sudo -u student podman ps | grep oef2jf
+curl http://localhost:80
+# Zou "<h1>Jens Fripont</h1>" moeten tonen
+
+# 3.	Voer deze oefening uit in de map oef3<jeintialen>. Maak gebruik van registry.access.redhat.com/ubi10/ubi-init. Maak een containerfile met de naam containerfile3 waarmee je een image aanmaakt die zowel een SSH-server als een webserver draait (jawel, ook dat gaat 😊).
+# -	De container die je afleidt van het image toont <jevoornaam><jeachternaam> als je http://localhost:8080 opent analoog aan onderstaande.
+ 
+
+# -	Op de SSH-server moet een gebruiker <jevoornaam> kunnen inloggen via poort 2222. Je moet via "su –" kunnen overgaan naar de root-gebruiker.
+# -	Ingelogd via SSH op de container pas je de webpagina aan: <jeachternaam><jevoornaam> i.p.v. andersom.
+ 
+
+# Opgelet: je mag geen gebruik maken van sed. Maak enkel gebruik van commando’s die je zelf begrijpt. De rechten en eigenaar van /var/www/html moet je niet veranderen.
+
 # OPLOSSING:
-# A. Build:
-cd ~/webserver
-podman build -t myweb .
+# A. Directory maken en naar toe gaan:
+mkdir -p oef3jf
+cd oef3jf
 
-# B. Run:
-podman run -d --name myweb -p 9090:80 myweb
+# B. Containerfile maken:
+nano containerfile3
 
-# C. Test:
-curl http://localhost:9090
-# Of in browser: http://<server-ip>:9090
+# Inhoud van containerfile3:
+FROM registry.access.redhat.com/ubi10/ubi-init:latest
 
+RUN dnf install -y httpd openssh-server && dnf clean all
 
-# OPGAVE 6:
-# Commit een draaiende container naar een nieuwe image.
-#
-# OPLOSSING:
-# A. Start een container en maak wijzigingen:
-podman run -it --name temp-container registry.access.redhat.com/ubi10/ubi:latest bash
-# In container:
-dnf install -y httpd
-echo "Test pagina" > /var/www/html/index.html
-exit
+RUN useradd -m Jens && echo 'Jens:password' | chpasswd && echo 'root:password' | chpasswd
 
-# B. Commit container naar image:
-podman commit temp-container my-custom-httpd
+RUN mkdir -p /var/run/sshd
 
-# C. Verificatie:
-podman images | grep my-custom-httpd
+RUN echo 'PasswordAuthentication yes' >> /etc/ssh/sshd_config
 
-# D. Test nieuwe image:
-podman run -d --name test-custom -p 8082:80 my-custom-httpd /usr/sbin/httpd -D FOREGROUND
-curl http://localhost:8082
+RUN cp /etc/pam.d/system-auth /etc/pam.d/system-auth.bak && grep -v 'pam_systemd.so' /etc/pam.d/system-auth > /tmp/system-auth && mv /tmp/system-auth /etc/pam.d/system-auth
 
+COPY index.html /var/www/html/index.html
 
-# OPGAVE 7:
-# Export en import een container image.
-#
-# OPLOSSING:
-# A. Image exporteren naar tar file:
-podman save -o contdns.tar localhost/contdns:latest
+EXPOSE 80 22
 
-# B. Verificatie tar file:
-ls -lh contdns.tar
+RUN systemctl enable httpd sshd
 
-# C. Image verwijderen (voor test):
-podman rmi localhost/contdns:latest
+CMD ["/usr/sbin/init"]
 
-# D. Image importeren:
-podman load -i contdns.tar
+# C. Index.html maken:
+echo "<h1>Jens Fripont</h1>" > index.html
 
-# E. Verificatie:
-podman images | grep contdns
+# D. Image bouwen:
+podman build -t localhost/mijnwww3jf -f containerfile3 .
 
-# EXTRA: Image transfer naar andere host:
-# scp contdns.tar student@otherserver:~/
-# ssh student@otherserver
-# podman load -i contdns.tar
+# E. Container starten:
+podman run -d --name oef3jf -p 8080:80 -p 2222:22 localhost/mijnwww3jf
+
+# F. Firewall aanpassen (indien nodig):
+sudo firewall-cmd --add-port=2222/tcp --permanent
+sudo firewall-cmd --reload
+
+# G. Verificatie web:
+curl http://localhost:8080
+# Zou "<h1>Jens Fripont</h1>" moeten tonen
+
+# H. SSH als Jens:
+ssh -o StrictHostKeyChecking=no Jens@localhost -p 2222
+# Password: password
+
+# I. In SSH: su -
+# Password: password
+
+# J. Als root: echo "<h1>Fripont Jens</h1>" > /var/www/html/index.html
+
+# K. exit (root), exit (SSH)
+
+# L. Verificatie:
+curl http://localhost:8080
+# Zou "<h1>Fripont Jens</h1>" moeten tonen
+
 
 
 # ============================================
 # OEFENING 5 - Podman Networks
 # ============================================
 
-# OPGAVE 1:
-# Toon alle beschikbare netwerken.
-#
+# OPGAVE
+# 1.	Maak een rootless container aan zonder zelfgemaakt netwerk. 
+# Maak verbinding met de server vanuit de container door middel van SSH (SSH in container met Server<jeinitialen>). 
+# Maak gebruik van ubi10-image zonder init. 
+# De naam van de container is sshtest<jeintialen>. 
+
 # OPLOSSING:
-podman network ls
+# A. Rootless container starten met SSH keys gemount:
+podman run -it --network host --name sshtestjf -v /home/student/.ssh:/root/.ssh:Z registry.access.redhat.com/ubi10/ubi:latest /bin/bash
 
-# Met details:
-podman network inspect podman
-
-
-# OPGAVE 2:
-# Maak een custom bridge network met subnet 192.168.5.0/24 en gateway 192.168.5.1.
-#
-# OPLOSSING:
-podman network create --subnet 192.168.5.0/24 --gateway 192.168.5.1 mynat
-
-# Verificatie:
-podman network ls
-podman network inspect mynat
-
-
-# OPGAVE 3:
-# Start twee containers op het custom network en test de communicatie tussen beide.
-#
-# OPLOSSING:
-# A. Oude containers opruimen:
-podman rm --all -f
-
-# B. Container 1 starten:
-podman run -d -it --name C1 --hostname C1 --network mynat --ip 192.168.5.150 registry.access.redhat.com/ubi10/ubi-init
-
-# C. Container 2 starten:
-podman run -d -it --name C2 --hostname C2 --network mynat --ip 192.168.5.151 registry.access.redhat.com/ubi10/ubi-init
-
-# D. Verificatie containers:
-podman ps
-
-# E. Test communicatie van C1 naar C2:
-podman exec -it C1 bash
-dnf install -y iputils
-ping -c 3 C2
-ping -c 3 192.168.5.151
-exit
-
-# F. Test van C2 naar C1:
-podman exec -it C2 bash
-dnf install -y iputils
-ping -c 3 C1
-ip a  # Bekijk IP configuratie
-ip route  # Bekijk routing table
-exit
-
-
-# OPGAVE 4:
-# Configureer een container die host.containers.internal kan gebruiken om de host te bereiken.
-#
-# OPLOSSING:
-# A. Start webserver op host:
-podman run -d --name hostweb -p 8080:80 registry.access.redhat.com/ubi10/httpd-24
-
-# B. Start test container:
-podman run --rm -it registry.access.redhat.com/ubi10/ubi bash
-
-# C. In container: test verbinding naar host:
-dnf install -y curl
-curl -v http://host.containers.internal:8080
-exit
-
-# UITLEG:
-# host.containers.internal is automatisch beschikbaar in containers
-# Het wijst naar de host machine
-
-
-# OPGAVE 5:
-# Maak een macvlan network waarbij containers direct op het fysieke netwerk zitten.
-#
-# OPLOSSING:
-# A. Macvlan network maken (pas interface naam aan):
-podman network create -d macvlan --subnet 192.168.112.0/24 --gateway 192.168.112.2 -o parent=ens160 mymacvlan
-
-# B. Container op macvlan starten:
-podman run -d --name macvlan-test --network mymacvlan --ip 192.168.112.150 registry.access.redhat.com/ubi10/ubi-init
+# B. Binnen de container: SSH clients installeren en verbinden:
+dnf install -y openssh-clients
+echo 192.168.112.100 serverJF >> /etc/hosts
+chmod 700 /root/.ssh
+chmod 600 /root/.ssh/id_rsa
+ssh -o StrictHostKeyChecking=no student@192.168.112.100
+ssh student@serverJF
+# Dit zou werken dankzij de eerder ingestelde passwordless SSH
+# Je bent nu verbonden met de server vanaf de container
 
 # C. Verificatie:
-podman exec macvlan-test ip a
+podman ps -a | grep sshtestjf
+# Container zou gestopt zijn na exit
 
-# LET OP: Container is nu direct bereikbaar op 192.168.112.150 vanaf fysiek netwerk
 
+# 2.	Zoek via het commando podman naar de officiële Pi-hole docker image.
 
-# OPGAVE 6:
-# Verbind een container met meerdere netwerken tegelijk.
-#
 # OPLOSSING:
-# A. Tweede netwerk maken:
-podman network create --subnet 192.168.6.0/24 mynet2
+podman search pihole
+# Dit toont de officiële Pi-hole image: pihole/pihole
 
-# B. Container starten op eerste netwerk:
-podman run -d --name multi-net --network mynat registry.access.redhat.com/ubi10/ubi:latest sleep infinity
+# 3.	Maak een container aan met Pi-hole (official image), gebaseerd op  de officiële Pi-hole docker image.  Maak gebruik van een host-netwerk.
+# Maak geen gebruik van volume mapping (optie -v). Dat is immers nog niet gezien in de lessen.  Laat Pi-hole DNS doorverwijzen naar de DNS-servers van Google.
+# Geef de container de naam pihole<jeintialen>.  
+# Doel van de installatie Pi-hole:
+# o	Je moet kunnen inloggen op de webinterface via Pi-hole via http://server<jeinitialen>.lan/admin .
+# o	Je moet gebruik kunnen maken van de DNS-functie van Pi-hole om advertenties te vermijden op websites.
+# Toon volgend resultaat:
+# o	Laat de webinterface zien waar je Pi-hole kan beheren door in te loggen op http://server<jeinitialen>.lan/admin. 
+# o	Voer “nslookup www.kde.org “ uit gebruik makend van DNS-server Pi-hole op Server<jeinitialen>.
+# o	Doe een check dat er geen advertenties te zien zijn door te surfen naar https://fuzzthepiguy.tech/adtest/ op Server<jeinitialen>. Pas hiervoor uiteraard de DNS-instellingen op Server<jeinitialen> aan.
 
-# C. Container verbinden met tweede netwerk:
-podman network connect mynet2 multi-net
-
-# D. Verificatie:
-podman inspect multi-net | grep -A 20 Networks
-podman exec multi-net ip a  # Zou meerdere interfaces moeten tonen
-
-# E. Test beide netwerken:
-podman exec multi-net bash -c "dnf install -y iputils && ping -c 2 192.168.5.150 && ping -c 2 192.168.6.1"
-
-
-# OPGAVE 7:
-# Verwijder een netwerk.
-#
 # OPLOSSING:
-# A. Eerst alle containers op netwerk stoppen/verwijderen:
-podman rm -f $(podman ps -a -q --filter network=mynet2)
 
-# B. Netwerk verwijderen:
-podman network rm mynet2
+# Create data directories
+sudo mkdir -p /dataJF/conf /dataJF/logs
+sudo chown root:root /dataJF/conf /dataJF/logs
+sudo chmod 700 /dataJF/conf /dataJF/logs
 
-# C. Verificatie:
-podman network ls
+# A. Pi-hole container starten met host netwerk en Google DNS forwarding:
+sudo podman run -d --network host --name piholejf \
+  -v /dataJF/conf:/etc/pihole \
+  -v /dataJF/logs:/var/log/pihole \
+  -e TZ='Europe/Brussels' \
+  -e PIHOLE_DNS1=8.8.8.8 \
+  -e PIHOLE_DNS2=8.8.4.4 \
+  docker.io/pihole/pihole:latest
+
+# Wacht even tot container volledig opgestart is
+sleep 30
+
+# B. Firewall aanpassen voor web interface (poort 80) en DNS (poort 53):
+sudo firewall-cmd --add-port=80/tcp --permanent
+sudo firewall-cmd --add-port=53/udp --permanent
+sudo firewall-cmd --add-port=53/tcp --permanent
+sudo firewall-cmd --reload
+
+# C. Verificatie dat container draait:
+sudo podman ps | grep piholejf
+
+# D. Controleer dat data opgeslagen is in de volumes:
+ls -la /dataJF/conf
+ls -la /dataJF/logs
+
+# E. Web interface openen (vereist DNS configuratie voor serverJF.lan):
+# Eerst /etc/hosts aanpassen voor lokale DNS:
+echo "127.0.0.1 serverJF.lan" | sudo tee -a /etc/hosts
+
+# Open browser naar: http://serverJF.lan/admin
+# Default wachtwoord: verander dit via sudo podman logs piholejf | grep "password"
+
+# E. DNS test met nslookup:
+nslookup www.kde.org 127.0.0.1
+# Dit gebruikt Pi-hole als DNS server
+
+# F. Advertentie test:
+# Backup huidige DNS config:
+sudo cp /etc/resolv.conf /etc/resolv.conf.backup
+
+# Stel Pi-hole in als DNS server:
+echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf
+
+# Verificatie dat Pi-hole ad blocking werkt:
+nslookup doubleclick.net 127.0.0.1
+# Zou 0.0.0.0 moeten retourneren voor geblokkeerde domeinen
+
+# Open browser naar: https://fuzzthepiguy.tech/adtest/
+# Controleer dat er geen advertenties worden getoond
+
+# Herstel DNS config:
+sudo mv /etc/resolv.conf.backup /etc/resolv.conf
+
+# 4.	Deze vraag is een vervolg op vraag 3.
+
+# OPLOSSING:
+# Zorg ervoor dat Pi-hole container draait op ServerJF (zie oef5.3)
+# Op serverJF: Open firewall voor DNS verkeer
+sudo firewall-cmd --add-port=53/udp --permanent && sudo firewall-cmd --add-port=53/tcp --permanent && sudo firewall-cmd --reload
+# Op ClientJF (RHEL10):
+# A. DNS server instellen op IP van ServerJF (192.168.112.100)
+# Methode 1: Via nmcli (NetworkManager)
+# Eerst connection naam vinden:
+nmcli connection show
+# Stel DNS in (vervang <connection-name> met juiste naam, bijv. 'Wired connection 1'):
+sudo nmcli connection modify ens160 ipv4.dns 192.168.112.100
+sudo nmcli connection down ens160
+sudo nmcli connection up ens160
+
+# Methode 2: Direct /etc/resolv.conf bewerken (tijdelijk):
+sudo cp /etc/resolv.conf /etc/resolv.conf.backup
+echo "nameserver 192.168.112.100" | sudo tee /etc/resolv.conf
+
+# B. Verificatie: Voer uit op ClientJF:
+nslookup www.kde.org
+# Dit zou moeten resolven via Pi-hole op ServerJF, en ad blocking zou werken
+
+# C. Optioneel: Test ad blocking door https://fuzzthepiguy.tech/adtest/ te openen in browser op ClientJF
+# (zou geen ads moeten tonen)
+
+# D. Herstel DNS indien nodig:
+# Voor nmcli: sudo nmcli connection modify ens160 ipv4.dns ""
+# Voor resolv.conf: sudo mv /etc/resolv.conf.backup /etc/resolv.conf
+
+# 5.	Installeer een DHCP-server in ubi10/ubi-init. Je zal merken dat je gebruik moet maken van een alternatief voor dhcpd. Gebruik een range van 192.168.112.10 tot 192.168.112.200. Maak gebruik van een macvlan-netwerk.
+
+# OPLOSSING:
+# Alternatief voor dhcpd: Gebruik dnsmasq, aangezien dhcp-server niet beschikbaar is in ubi10.
+
+# A. Maak macvlan netwerk aan:
+sudo podman network create -d macvlan --subnet 192.168.112.0/24 --gateway 192.168.112.1 -o parent=ens160 macvlan-net
+
+# B. Maak directory voor config:
+mkdir -p oef5dhcp
+
+# C. Maak Containerfile voor DHCP server:
+cat > oef5dhcp/Containerfile << 'EOF'
+FROM registry.access.redhat.com/ubi10/ubi-init:latest
+
+RUN dnf install -y dnsmasq && dnf clean all
+
+COPY dnsmasq.conf /etc/dnsmasq.conf
+
+RUN systemctl enable dnsmasq
+
+EXPOSE 67/udp
+
+CMD ["/usr/sbin/init"]
+EOF
+
+# D. Maak dnsmasq config:
+cat > oef5dhcp/dnsmasq.conf << 'EOF'
+interface=eth0
+dhcp-range=192.168.112.10,192.168.112.200,255.255.255.0,24h
+dhcp-option=option:router,192.168.112.1
+dhcp-option=option:dns-server,192.168.112.100
+EOF
+
+# E. Bouw de image:
+sudo podman build -t localhost/dhcp-server -f oef5dhcp/Containerfile oef5dhcp
+
+# F. Start de container:
+sudo podman run -d --name dhcp-server --network macvlan-net --privileged localhost/dhcp-server
+
+# G. Verificatie:
+sudo podman ps | grep dhcp-server
+sudo podman logs dhcp-server
+
+# H. Test: Op ClientJF, zet netwerk op DHCP (indien niet al), en controleer of IP in range 10-200 wordt toegekend.
+# Bijv. ip addr show op ClientJF
+
+# I. Cleanup:
+sudo podman stop dhcp-server
+sudo podman rm dhcp-server
+sudo podman network rm macvlan-net
+
+# 6.	Uitbreidingsoefening 1 
+# Maak dezelfde oefening als oefening 3 maar maak gebruik van een rootless container zonder eigen ingesteld netwerk. Gebruik poort 6000 voor DNS en poort 8080 voor de admin website van Pi-hole. 
+# Doe een nslookup op poort 6000 op Server<jeintialen> voor te testen. 
+# Pas daarna de firewall op Server<jeintialen> aan zodat je op Server<jeinitialen> de DNS-server van Pi-hole kan gebruiken via de standaardpoort. Test dit uit door een nslookup te doen. Test ook uit in browser dat er geen advertenties getoond worden: https://fuzzthepiguy.tech/adtest/ . Maak Youtube-video van 5 minuten erover. Bewaar link en breng mee.
+
+# 7.	Uitbreidingsoefening 2
+# Voer deze oefening uit op Server<jeinitialen>.
+
+# Maak een rootfull container aan waarop je Pi-hole installeert. Maak gebruik van het standaard bridge-netwerk.
+# Vertrek van de image ubi10/ubi-init. Hierin zit de moeilijkheid. Normaal wordt Debian Linux gebruikt…
+# Stel volgende poorten in:
+# - Poort 53 TCP/UDP moet open staan voor DNS-verkeer.
+# - Poort 80 TCP en 443 TCP voor webinterface.
+# Voor Pihole heeft de container een statisch IP-adres nodig.
+# De naam en hostname van de container is: pihole<jeintialen>. 
+# Check Pi-hole:
+# a.	Laat zien dat DNS-aanvraag voor www.google.be kan via je pi-hole.
+# b.	Check via https://fuzzthepiguy.tech/adtest/ dat er geen advertenties meer worden doorgelaten.
+# Maak Youtube-video van 5 minuten erover. Bewaar link en breng mee.
 
 
 # ============================================
 # OEFENING 6 - Podman Volumes
 # ============================================
 
-# OPGAVE 1:
-# Maak een named volume.
-#
+# OPGAVE
+# 1.	Voor deze oefening pas je oefening 3 (i.v.m. Pi-hole) van oefening 5 Podman networks aan. Maak nu gebruik van een gekoppeld volume voor configuratie en logs. Deze gegevens wordt bewaard in /data<jeintialen> met de submappen conf en logs. Alleen de root mag toegang hebben tot deze gegevens. Zorg ervoor dat Pi-hole als enige toegang heeft als container tot deze data. Laat ook zien dat er daadwerkelijk data op de containerhost opgeslagen in in die 2 mappen.
+
 # OPLOSSING:
-podman volume create mydata
+# A. Maak data directory aan met juiste permissies (alleen root toegang):
+sudo mkdir -p /dataJF/conf /dataJF/logs
+sudo chown root:root /dataJF/conf /dataJF/logs
+sudo chmod 700 /dataJF/conf /dataJF/logs
 
-# Verificatie:
-podman volume ls
-podman volume inspect mydata
+# B. Pi-hole container starten met gekoppelde volumes (bound mounts) in plaats van named volumes:
+sudo podman run -d --network host --name piholejf \
+  -v /dataJF/conf:/etc/pihole:Z \
+  -v /dataJF/logs:/var/log/pihole:Z \
+  -e TZ='Europe/Brussels' \
+  -e PIHOLE_DNS1=8.8.8.8 \
+  -e PIHOLE_DNS2=8.8.4.4 \
+  docker.io/pihole/pihole:latest
 
+# Wacht even tot container volledig opgestart is
+sleep 30
 
-# OPGAVE 2:
-# Start een container die de named volume gebruikt.
-#
-# OPLOSSING:
-podman run -d --name vol-test -v mydata:/data registry.access.redhat.com/ubi10/ubi:latest sleep infinity
+# C. Firewall aanpassen voor web interface (poort 80) en DNS (poort 53):
+sudo firewall-cmd --add-port=80/tcp --permanent
+sudo firewall-cmd --add-port=53/udp --permanent
+sudo firewall-cmd --add-port=53/tcp --permanent
+sudo firewall-cmd --reload
 
-# Test volume:
-podman exec vol-test bash -c "echo 'Test data' > /data/test.txt"
-podman exec vol-test cat /data/test.txt
+# D. Verificatie dat container draait:
+sudo podman ps | grep piholejf
 
+# E. Controleer dat data daadwerkelijk opgeslagen wordt in de host mappen:
+ls -la /dataJF/conf
+ls -la /dataJF/logs
 
-# OPGAVE 3:
-# Maak een tweede container die dezelfde volume mount en verifieer dat data persistent is.
-#
-# OPLOSSING:
-# A. Tweede container starten:
-podman run -d --name vol-test2 -v mydata:/shared-data registry.access.redhat.com/ubi10/ubi:latest sleep infinity
+# F. Toon dat alleen root toegang heeft (andere gebruikers kunnen niet lezen):
+sudo -u student ls /dataJF/conf  # Zou toegang geweigerd moeten worden
+sudo -u student ls /dataJF/logs  # Zou toegang geweigerd moeten worden
 
-# B. Verificatie data is beschikbaar:
-podman exec vol-test2 cat /shared-data/test.txt
-# Zou "Test data" moeten tonen
+# G. Web interface openen (vereist DNS configuratie voor serverJF.lan):
+# Eerst /etc/hosts aanpassen voor lokale DNS:
+echo "127.0.0.1 serverJF.lan" | sudo tee -a /etc/hosts
 
-# C. Nieuwe data toevoegen vanaf container 2:
-podman exec vol-test2 bash -c "echo 'Data from container 2' >> /shared-data/test.txt"
+# Open browser naar: http://serverJF.lan/admin
+# Default wachtwoord: verander dit via sudo podman logs piholejf | grep "password"
 
-# D. Check vanaf container 1:
-podman exec vol-test cat /data/test.txt
-# Zou beide regels moeten tonen
+# H. DNS test met nslookup:
+nslookup www.kde.org 127.0.0.1
+# Dit gebruikt Pi-hole als DNS server
 
+# I. Advertentie test:
+# Backup huidige DNS config:
+sudo cp /etc/resolv.conf /etc/resolv.conf.backup
 
-# OPGAVE 4:
-# Gebruik een bind mount om een host directory te mounten in een container.
-#
-# OPLOSSING:
-# A. Directory op host maken:
-mkdir -p ~/container-data
-echo "Host data" > ~/container-data/host-file.txt
+# Stel Pi-hole in als DNS server:
+echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf
 
-# B. Container starten met bind mount:
-podman run -d --name bind-test -v ~/container-data:/mnt/host:Z registry.access.redhat.com/ubi10/ubi:latest sleep infinity
+# Verificatie dat Pi-hole ad blocking werkt:
+nslookup doubleclick.net 127.0.0.1
+# Zou 0.0.0.0 moeten retourneren voor geblokkeerde domeinen
 
-# C. Verificatie:
-podman exec bind-test ls -la /mnt/host
-podman exec bind-test cat /mnt/host/host-file.txt
+# Open browser naar: https://fuzzthepiguy.tech/adtest/
+# Controleer dat er geen advertenties worden getoond
 
-# D. Wijziging vanuit container:
-podman exec bind-test bash -c "echo 'Modified in container' >> /mnt/host/host-file.txt"
-
-# E. Check op host:
-cat ~/container-data/host-file.txt
-
-# UITLEG :Z flag:
-# :Z zorgt voor SELinux context relabeling (nodig op RHEL/Fedora)
-
-
-# OPGAVE 5:
-# Configureer Jellyfin media server met een persistent volume voor media.
-#
-# OPLOSSING:
-# A. Volumes maken:
-podman volume create jellyfin-config
-podman volume create jellyfin-cache
-mkdir -p ~/media/{movies,tv,music}
-
-# B. Jellyfin container starten:
-podman run -d \
-  --name jellyfin \
-  -p 8096:8096 \
-  -v jellyfin-config:/config:Z \
-  -v jellyfin-cache:/cache:Z \
-  -v ~/media:/media:Z \
-  docker.io/jellyfin/jellyfin:latest
-
-# C. Verificatie:
-podman ps
-podman logs jellyfin
-
-# D. Open browser naar: http://<server-ip>:8096
-# Volg setup wizard
+# Herstel DNS config:
+sudo mv /etc/resolv.conf.backup /etc/resolv.conf
 
 
-# OPGAVE 6:
-# Backup een volume.
-#
-# OPLOSSING:
-# A. Volume backup naar tar:
-podman run --rm -v mydata:/data -v ~/backups:/backup:Z registry.access.redhat.com/ubi10/ubi:latest tar czf /backup/mydata-backup.tar.gz -C /data .
+# 2.	Zet een Jellyfin Media Server op in Podman op Server<jeintialen>. 
+# Maak gebruik van het image van jellyfin/jellyfin.
+# Gebruik 2 named volumes :
+# a.	media<jeintialen> voor opslag foto’s enz.
+# b.	configuratie<jeintialen>  voor opslag configuratie
+# Maak gebruik van macvlan. 
+# Sla één foto op van een pinguin in het named volume media<jeintialen>.
 
-# B. Verificatie:
-ls -lh ~/backups/mydata-backup.tar.gz
+# Jellyfin moet bereikbaar zijn via poort 8096 op Server<jeintialen> en Client<jeintialen>.
+# Start Jellyfin Media Server op in een webbrowser op Server<jeintialen> en laat de pinguin zien. Doe hetzelfde op Client<jeinititialen>
 
-# C. Restore volume (indien nodig):
-# Nieuwe volume maken:
-podman volume create mydata-restored
+# Opgelet: laat in je screenshot duidelijk zien op welke VM je zit (zoals in onderstaande afbeelding bijvoorbeeld).
+ 
 
-# Data terugzetten:
-podman run --rm -v mydata-restored:/data -v ~/backups:/backup:Z registry.access.redhat.com/ubi10/ubi:latest tar xzf /backup/mydata-backup.tar.gz -C /data
-
-
-# OPGAVE 7:
-# Verwijder een volume.
-#
-# OPLOSSING:
-# A. Eerst containers die volume gebruiken stoppen:
-podman rm -f vol-test vol-test2
-
-# B. Volume verwijderen:
-podman volume rm mydata
-
-# C. Verificatie:
-podman volume ls
-
-
-# OPGAVE 8:
-# Verwijder alle ongebruikte volumes.
-#
-# OPLOSSING:
-podman volume prune -f
-
-# Verificatie:
-podman volume ls
+# Opgelet: VMware Workstation laat mogelijk maar één MAC-adres per virtuele adapter toe, tenzij je dat expliciet toestaat.
+# Los dit als volgt op:
+# 	Open .vmx-bestand van VM als VM uit staat
+# 	Voeg onderstaande regels toe:
+# 		ethernet0.promiscuousMode = "accept"
+# ethernet0.allowGuestConnectionControl = "TRUE"
+# ethernet0.noPromisc = "FALSE"
 
 
 # ============================================
