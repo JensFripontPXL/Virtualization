@@ -1756,3 +1756,2072 @@ sudo systemctl restart iscsid
 # ============================================
 # EINDE ALLE OEFENINGEN
 # ============================================
+
+#!/bin/bash
+# Kubernetes Oefeningen Deel 2
+# Initialen: JF (pas aan naar je eigen initialen)
+# OPLOSSING: toepassen van de werkende manifests uit deze directory
+# Zorg dat namespace 'web' bestaat en gebruik de eerder aangemaakte YAML-bestanden
+kubectl create namespace web >/dev/null 2>&1 || true
+kubectl apply -f /home/student/Documenten/apache-web-cms.yaml
+kubectl apply -f /home/student/Documenten/apache-web-pods.yaml
+kubectl apply -f /home/student/Documenten/apache-web-svc.yaml
+kubectl apply -f /home/student/Documenten/nginx-index.yaml
+kubectl apply -f /home/student/Documenten/nginx-pods.yaml
+kubectl apply -f /home/student/Documenten/nginx-nodeports.yaml
+
+# Wacht tot pods klaar zijn
+kubectl -n web wait --for=condition=ready pod --all --timeout=120s || true
+
+# Test ClusterIP vanuit web1 (5 requests om loadbalancing te observeren)
+kubectl -n web exec web1 -- sh -c "apk add --no-cache curl >/dev/null 2>&1 || true; for i in 1 2 3 4 5; do curl -sS http://web-svc:8890; echo; done"
+
+# Test NodePorts vanaf host (vereist dat de cluster met gepubliceerde poorten is aangemaakt)
+echo "Testing NodePorts from host:" 
+curl -sS --max-time 5 http://localhost:30500 || echo "NodePort 30500 unreachable"
+curl -sS --max-time 5 http://localhost:30600 || echo "NodePort 30600 unreachable"
+# 2. Maak namespace "dns" aan (imperatief)
+kubectl create namespace dns
+
+# 3. Maak namespace "web" aan (declaratief)
+cat <<EOF > web-namespace.yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: web
+EOF
+kubectl apply -f web-namespace.yaml
+
+# 4. Pihole pod in dns namespace
+cat <<EOF > pihole-dns.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: pihole
+  namespace: dns
+  labels:
+    app: pihole
+spec:
+  containers:
+  - name: pihole
+    image: pihole/pihole
+    ports:
+    - containerPort: 80
+EOF
+kubectl apply -f pihole-dns.yaml
+
+# Service voor pihole (nodig voor cross-namespace communicatie)
+cat <<EOF > pihole-svc.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: pihole-svc
+  namespace: dns
+spec:
+  selector:
+    app: pihole
+  ports:
+  - port: 80
+    targetPort: 80
+EOF
+kubectl apply -f pihole-svc.yaml
+
+# 5. Apache pod in web namespace op poort 8023
+cat <<EOF > apache-web.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: apache
+  namespace: web
+  labels:
+    app: apache
+spec:
+  containers:
+  - name: apache
+    image: httpd:latest
+    ports:
+    - containerPort: 8023
+    command: ["/bin/sh", "-c"]
+    args:
+    - sed -i 's/Listen 80/Listen 8023/' /usr/local/apache2/conf/httpd.conf && httpd-foreground
+EOF
+kubectl apply -f apache-web.yaml
+
+# 6. Ping van apache naar pihole (cross-namespace) - juiste werkwijze
+# Stap A: haal het IP-adres van de pihole pod op
+kubectl -n dns get pods -o wide
+
+# Stap B: log in op de apache pod met een shell (gebruik `sh`, niet `bash`)
+# Voor interactieve debugging:
+# kubectl -n web exec -it apache -- sh
+# Binnen de shell: voer uit:
+# ping <IP-van-pihole-pod>
+
+# Stap C: één-regel alternatief (haalt IP op en voert ping uit; installeert ping
+# in de container als dat nodig is en als er een package manager aanwezig is)
+kubectl -n web exec apache -- ping -c3 $(kubectl -n dns get pod pihole -o jsonpath='{.status.podIP}')
+
+# Opmerking: sommige containers antwoorden niet op ICMP of hebben geen ping
+# beschikbaar. Als ICMP faalt, test dan TCP/HTTP (bijv. met een tijdelijke curl-pod):
+# kubectl run -n web curlpod --image=curlimages/curl --restart=Never --command -- sleep 3600
+# kubectl exec -n web curlpod -- curl -v http://pihole-svc.dns.svc.cluster.local
+# kubectl delete pod -n web curlpod
+
+Oefening 13: K8S - Services
+
+Opmerking
+Les eerst de volledige opgave voor je begint!
+
+Inlevering
+-	U dient de oplossing van deze oefening zelf te maken en mee te brengen naar PE en (her)examen. Bewaar uw oefeningen in de cloud.
+
+-	Screenshots instellingen én screenshots resultaat zijn verplicht: in elk screenshot moeten jouw initialen staan tenzij het niet anders kan
+
+o	Screenshots moeten duidelijk zijn!
+
+-	Maak gebruik van Server<je_eigen_initialen> en Client<je_eigen_intialen>.
+
+-	Fraude kan leiden tot 0 op PE/(her)examen.
+
+
+OPGAVE
+1.	Maak voor deze oefening gebruik van ClusterIP. 
+Maak 3 verschillende Apache containers aan in 3 pods. Pas elke standaardpagina van de website aan met de inhoud <jeinitialen> web1, <jeintialen>web2 en <jeintialen>web3  zodat er een duidelijk verschil is tussen de 3 containers. Koppel deze pods aan dezelfde service dewelke luistert op poort 8890. 
+# Maak een ClusterIP Service met 3 Apache Pods
+1) ConfigMaps voor de 3 indexpagina's aanmaken
+# Maak yaml bestand aan.
+apache-web-cms.yaml:
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web1-index
+  namespace: web
+data:
+  index.html: |
+    <!doctype html>
+    <html><body><h1>JF web1</h1></body></html>
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web2-index
+  namespace: web
+data:
+  index.html: |
+    <!doctype html>
+    <html><body><h1>JF web2</h1></body></html>
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: web3-index
+  namespace: web
+data:
+  index.html: |
+    <!doctype html>
+    <html><body><h1>JF web3</h1></body></html>
+
+# Maak de ConfigMaps aan
+kubectl apply -f web-index-cms.yaml
+2) Maak 3 APache Pods met elk hun eigen index pagina
+# Maak yaml bestand aan.
+apache-web-pods.yaml:
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web1
+  namespace: web
+  labels:
+    app: myweb
+    tier: frontend
+    site: web1
+    owner: JF
+spec:
+  containers:
+    - name: httpd
+      image: httpd:2.4-alpine
+      # Luister intern op poort 80 (default)
+      ports:
+        - containerPort: 80
+      volumeMounts:
+        - name: index
+          mountPath: /usr/local/apache2/htdocs/index.html
+          subPath: index.html
+  volumes:
+    - name: index
+      configMap:
+        name: web1-index
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web2
+  namespace: web
+  labels:
+    app: myweb
+    tier: frontend
+    site: web2
+    owner: JF
+spec:
+  containers:
+    - name: httpd
+      image: httpd:2.4-alpine
+      ports:
+        - containerPort: 80
+      volumeMounts:
+        - name: index
+          mountPath: /usr/local/apache2/htdocs/index.html
+          subPath: index.html
+  volumes:
+    - name: index
+      configMap:
+        name: web2-index
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: web3
+  namespace: web
+  labels:
+    app: myweb
+    tier: frontend
+    site: web3
+    owner: JF
+spec:
+  containers:
+    - name: httpd
+      image: httpd:2.4-alpine
+      ports:
+        - containerPort: 80
+      volumeMounts:
+        - name: index
+          mountPath: /usr/local/apache2/htdocs/index.html
+          subPath: index.html
+  volumes:
+    - name: index
+      configMap:
+        name: web3-index
+# Maak de Pods aan
+kubectl apply -f apache-web-pods.yaml
+3) Maak de ClusterIP Service aan
+# Maak yaml bestand aan.
+apache-web-svc.yaml:
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: web-svc
+  namespace: web
+spec:
+  type: ClusterIP
+  selector:
+    app: myweb
+  ports:
+    - name: http
+      port: 8890       # service-poort
+      targetPort: 80   # container-poort in pods
+# Maak de Service aan
+kubectl apply -f apache-web-svc.yaml
+
+
+# Een ClusterIP service balanceert verkeer over alle gezonde pods die aan de selctor voldoen.
+# Standaard heeft kubernetes geen sticky session. Kube-proxy doet round-robin per nieuwe verbinding.
+# Elke nieuwe request kan op een ander backend uitkomen je ziet afwisselnd JF web1,..
+# Als er keep-alive wordt gebruikt, kan meerdere http requests naar dezelfde backend gaan, waardoor het minder wisselt
+
+Test nu toegang tot de service uit vanuit één van de 3 pods. Test de toegang een aantal keer. Verklaar je resultaat.
+4) Test en verklaar resultaat
+kubectl -n web get pods -o wide
+kubectl -n web exec -it web1 -- sh
+# Installeer curl indien nodig
+apk add curl
+curl -sI http://web-svc:8890
+
+2. Maak twee verschillende Nginx-webservers, elk draaiend op een aparte node in je Kubernetes-cluster. Beide webservers luisteren intern op poort 80. Geef de website op de eerste server als inhoud <jevoornaam> en de website op de tweede server als inhoud <jeachternaam>
+Configureer voor elke Nginx-pod een eigen NodePort-service zodat de webservers extern bereikbaar zijn via verschillende poorten.:
+# Maak de ConfigMaps met de indexpagina's aan
+nginx-index.yaml:
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-a-index
+  namespace: web
+data:
+  index.html: |
+    <!doctype html><html><body><h1>Jens</h1></body></html>
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: nginx-b-index
+  namespace: web
+data:
+  index.html: |
+    <!doctype html><html><body><h1>Fripont</h1></body></html>
+# Maak de ConfigMaps aan
+kubectl apply -f nginx-index.yaml
+# Maak de Nginx pods aan elk op een aparte node
+nginx-pods.yaml:
+
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-a
+  namespace: web
+  labels:
+    app: nginx-a
+    owner: JF
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: k3d-namespaces-agent-0   # ← PAS AAN
+  containers:
+    - name: nginx
+      image: nginx:alpine
+      ports:
+        - containerPort: 80
+      volumeMounts:
+        - name: index
+          mountPath: /usr/share/nginx/html/index.html
+          subPath: index.html
+  volumes:
+    - name: index
+      configMap:
+        name: nginx-a-index
+---
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx-b
+  namespace: web
+  labels:
+    app: nginx-b
+    owner: JF
+spec:
+  nodeSelector:
+    kubernetes.io/hostname: k3d-namespaces-agent-1   # ← PAS AAN
+  containers:
+    - name: nginx
+      image: nginx:alpine
+      ports:
+        - containerPort: 80
+      volumeMounts:
+        - name: index
+          mountPath: /usr/share/nginx/html/index.html
+          subPath: index.html
+  volumes:
+    - name: index
+      configMap:
+        name: nginx-b-index
+# Maak de Nginx pods aan
+kubectl apply -f nginx-pods.yaml
+# Maak de NodePort services aan
+nginx-nodeports.yaml:
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-a-svc
+  namespace: web
+spec:
+  type: NodePort
+  selector:
+    app: nginx-a
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30500  
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: nginx-b-svc
+  namespace: web
+spec:
+  type: NodePort
+  selector:
+    app: nginx-b
+  ports:
+    - port: 80
+      targetPort: 80
+      nodePort: 30600
+# Maak de NodePort services aan
+kubectl apply -f nginx-nodeports.yaml
+
+a. Node 1
+Intern luistert de webserver op poort 80.
+Extern is de server toegankelijk via NodePort-poort 30500.
+b. Node 2
+Intern luistert de webserver op poort 80.
+Extern is de server toegankelijk via NodePort-poort 30600.
+
+# Toegang testen tot beide Nginx-webservers via NodePort vanaf je host machine
+# Haal het IP-adres van een van de nodes op
+kubectl get nodes -o wide
+# Test toegang tot Nginx-a
+# Ga in de node terminal
+kubectl -n web exec -it nginx-a --  sh
+curl -sI http://<NODE1_IP>:30500
+# Test toegang tot Nginx-b
+kubectl -n web exec -it nginx-b --  sh
+curl -sI http://<NODE2_IP>:30600
+
+Oefening 14: K8S - Deployments
+
+Opmerking
+Les eerst de volledige opgave voor je begint!
+
+Inlevering
+-	U dient de oplossing van deze oefening zelf te maken en mee te brengen naar PE en (her)examen. Bewaar uw oefeningen in de cloud.
+
+-	Screenshots instellingen én screenshots resultaat zijn verplicht: in elk screenshot moeten jouw initialen staan tenzij het niet anders kan
+
+o	Screenshots moeten duidelijk zijn!
+
+-	Maak gebruik van Server<je_eigen_initialen> en Client<je_eigen_intialen>.
+
+-	Fraude kan leiden tot 0 op PE/(her)examen.
+
+
+OPGAVE
+1.	Maak een nieuwe cluster aan genaamd dns met 1 control plane en 3 worker nodes.
+
+2.	Maak in deze cluster een deployment van Pihole 2025.07.1 met 5 replicas.
+
+3.	Pas deze deployment nu aan zodat er een rolling update wordt gedaan naar versie 2025.10.1 en vervolgens naar 2025.11.0.
+
+4.	Doe op een imperatieve wijze een rollback naar de vorige versie.
+
+5.	Bewijs dat je deployment aan self-healing kan doen.
+
+
+OPLOSSING
+
+# Stap 1: Maak cluster aan (of gebruik bestaande cluster)
+# Opmerking: Het aanmaken van een nieuwe cluster kan problemen geven.
+# Simpelste oplossing: gebruik bestaande cluster (bijv. 'namespaces')
+
+# Als je toch een nieuwe cluster wilt maken:
+# k3d cluster create dns --servers 1 --agents 3 --wait
+
+# Gebruik bestaande cluster
+kubectl config use-context k3d-namespaces
+kubectl get nodes
+
+# Stap 2: Maak Deployment YAML bestand aan
+# Bestand: pihole-deployment.yaml
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: pihole-deployment
+  labels:
+    app: pihole
+    owner: JF
+spec:
+  replicas: 5
+  selector:
+    matchLabels:
+      app: pihole
+  template:
+    metadata:
+      labels:
+        app: pihole
+        owner: JF
+    spec:
+      containers:
+      - name: pihole
+        image: pihole/pihole:2025.07.1
+        ports:
+        - containerPort: 80
+
+# Maak deployment aan
+kubectl apply -f pihole-deployment.yaml
+
+# Verifieer deployment en pods
+kubectl get deployment pihole-deployment
+kubectl get pods -l app=pihole
+
+# Wacht tot alle pods Running zijn (kan tot 60s duren)
+kubectl wait --for=condition=ready pod -l app=pihole --timeout=120s
+
+# Stap 3a: Rolling update naar versie 2025.10.1
+kubectl set image deployment/pihole-deployment pihole=pihole/pihole:2025.10.1 --record
+
+# Monitor de rolling update
+kubectl rollout status deployment/pihole-deployment
+
+# Verifieer nieuwe versie
+kubectl describe deployment pihole-deployment | grep Image:
+
+# Stap 3b: Rolling update naar versie 2025.11.0
+kubectl set image deployment/pihole-deployment pihole=pihole/pihole:2025.11.0
+
+# Monitor de rolling update
+kubectl rollout status deployment/pihole-deployment
+
+# Verifieer nieuwe versie
+kubectl describe deployment pihole-deployment | grep Image:
+
+# Stap 4: Imperatieve rollback naar vorige versie
+# Bekijk rollout history
+kubectl rollout history deployment/pihole-deployment
+
+# Doe rollback naar vorige versie (2025.10.1)
+kubectl rollout undo deployment/pihole-deployment
+
+# Monitor rollback
+kubectl rollout status deployment/pihole-deployment
+
+# Verifieer dat we terug zijn op versie 2025.10.1
+kubectl describe deployment pihole-deployment | grep Image:
+kubectl get pods -l app=pihole -o wide
+
+# Stap 5: Bewijs self-healing
+# Kubernetes deployment zorgt ervoor dat altijd het gewenste aantal replicas (5) actief is
+
+# Verwijder 1 pod
+POD_NAME=$(kubectl get pods -l app=pihole --no-headers | head -1 | awk '{print $1}')
+kubectl delete pod $POD_NAME
+
+# Wacht even en bekijk pods opnieuw
+sleep 3
+kubectl get pods -l app=pihole
+
+# Je ziet dat er automatisch een nieuwe pod is aangemaakt om de verwijderde pod te vervangen
+# De AGE van de nieuwe pod is jonger dan de andere pods - dit bewijst self-healing!
+
+# SCREENSHOTS VOOR INLEVERING:
+
+# Screenshot 1: Deployment overzicht met JF initialen
+kubectl get deployment pihole-deployment -o wide
+
+# Screenshot 2: Alle 5 pods Running
+kubectl get pods -l app=pihole -o wide
+
+# Screenshot 3: Rollout history met verschillende versies
+kubectl rollout history deployment/pihole-deployment
+
+# Screenshot 4: Huidige image versie na rollback
+kubectl describe deployment pihole-deployment | grep -A 3 "Image:"
+
+# Screenshot 5: Self-healing bewijs - pod ages
+# Na het verwijderen en herstellen zie je dat 1 pod een jongere AGE heeft
+kubectl get pods -l app=pihole
+
+# Screenshot 6: Deployment YAML met JF initialen
+cat pihole-deployment.yaml
+
+UITLEG CONCEPTEN:
+
+1. Deployment vs Pod:
+   - Pod: Kleinste eenheid in Kubernetes, draait 1 of meer containers
+   - Deployment: Beheert een set van identieke pods (replicas)
+   - Deployment zorgt voor:
+     * Self-healing (vervangt crashed pods)
+     * Rolling updates (geleidelijke updates zonder downtime)
+     * Rollback (terugkeren naar vorige versie)
+     * Scaling (aantal replicas aanpassen)
+
+2. Rolling Update:
+   - Update strategie die pods geleidelijk vervangt
+   - Standaard: max 25% unavailable, max 25% surge
+   - Tijdens update: oude en nieuwe versie draaien tegelijk
+   - Geen downtime voor de applicatie
+
+3. Self-Healing:
+   - Kubernetes monitort continu de pod status
+   - Als een pod crashed of wordt verwijderd:
+     * ReplicaSet detecteert dat aantal < gewenste aantal
+     * Nieuw pod wordt automatisch aangemaakt
+     * Gewenste staat (5 replicas) wordt hersteld
+
+4. Rollback:
+   - Kubernetes bewaart rollout history
+   - kubectl rollout undo keert terug naar vorige versie
+   - Nuttig bij problemen met nieuwe versie
+
+VEELGEMAAKTE FOUTEN:
+
+1. Cluster hangt vast bij aanmaken
+   → Oplossing: gebruik bestaande cluster
+
+2. Pods blijven in ContainerCreating
+   → Wacht langer, pihole images zijn groot (1+ GB)
+
+3. Rollback lijkt niet te werken
+   → Verifieer met: kubectl describe deployment | grep Image
+
+4. Self-healing niet duidelijk
+   → Let op AGE kolom, nieuwe pod is jonger dan anderen
+
+Oefening 15: K8S - Storage
+
+Opmerking
+Les eerst de volledige opgave voor je begint!
+
+Inlevering
+-	U dient de oplossing van deze oefening zelf te maken en mee te brengen naar PE en (her)examen. Bewaar uw oefeningen in de cloud.
+
+-	Screenshots instellingen, screenshots yaml files én screenshots resultaat zijn verplicht: in elk screenshot moeten jouw initialen staan tenzij het niet anders kan
+
+o	Screenshots moeten duidelijk zijn!
+
+-	Maak gebruik van Server<je_eigen_initialen> en Client<je_eigen_intialen>.
+
+-	Fraude kan leiden tot 0 op PE/(her)examen.
+
+
+OPGAVE
+1.	Maak een nieuwe cluster genaamd storage.
+
+2.	Bouw een volledige Wordpress. Zowel de Wordpress deployment als de MariaDB deployment moeten gebruik maken van persistant storage. Doe dit op een declaratieve manier.
+
+3.	Zorg dat je de wordpress site kan bereiken vanop je eigen computer. Bewijs dit door via een browser op je eigen laptop naar de site te surfen.
+
+4.	Maak een Apache pod. Daarnaast maak je ook een ubi10-init pod. Beide pods moeten op een declaratieve manier aangemaakt worden. Zorg dat beide pods dezelfde persistant storage delen.
+
+5.	Maak verschillende files aan op de ubi10-init pod en zorg dat deze ook direct bruikbaar zijn in de webserver zonder dat je ze eerst hebt moeten kopiëren
+
+
+OPLOSSING
+
+# Stap 1: Maak nieuwe cluster genaamd storage
+k3d cluster create storage --servers 1 --agents 2 -p "30080:30080@server:0" --wait
+
+# Verifieer cluster
+kubectl get nodes
+
+# Stap 2: WordPress + MariaDB met Persistent Storage
+
+# Bestand: mariadb-pvc.yaml
+cat <<EOF > mariadb-pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: mariadb-pvc
+  labels:
+    owner: JF
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+EOF
+
+kubectl apply -f mariadb-pvc.yaml
+
+# Bestand: wordpress-pvc.yaml
+cat <<EOF > wordpress-pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: wordpress-pvc
+  labels:
+    owner: JF
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 1Gi
+EOF
+
+kubectl apply -f wordpress-pvc.yaml
+
+# Bestand: mariadb-deployment.yaml
+cat <<EOF > mariadb-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mariadb
+  labels:
+    app: mariadb
+    owner: JF
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: mariadb
+  template:
+    metadata:
+      labels:
+        app: mariadb
+        owner: JF
+    spec:
+      containers:
+      - name: mariadb
+        image: mariadb:10.6
+        env:
+        - name: MYSQL_ROOT_PASSWORD
+          value: "rootpassword"
+        - name: MYSQL_DATABASE
+          value: "wordpress"
+        - name: MYSQL_USER
+          value: "wpuser"
+        - name: MYSQL_PASSWORD
+          value: "wppassword"
+        ports:
+        - containerPort: 3306
+        volumeMounts:
+        - name: mariadb-storage
+          mountPath: /var/lib/mysql
+      volumes:
+      - name: mariadb-storage
+        persistentVolumeClaim:
+          claimName: mariadb-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: mariadb-service
+  labels:
+    owner: JF
+spec:
+  selector:
+    app: mariadb
+  ports:
+  - port: 3306
+    targetPort: 3306
+  type: ClusterIP
+EOF
+
+kubectl apply -f mariadb-deployment.yaml
+
+# Wacht tot MariaDB ready is
+kubectl wait --for=condition=ready pod -l app=mariadb --timeout=120s
+
+# Bestand: wordpress-deployment.yaml
+cat <<EOF > wordpress-deployment.yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: wordpress
+  labels:
+    app: wordpress
+    owner: JF
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: wordpress
+  template:
+    metadata:
+      labels:
+        app: wordpress
+        owner: JF
+    spec:
+      containers:
+      - name: wordpress
+        image: wordpress:latest
+        env:
+        - name: WORDPRESS_DB_HOST
+          value: "mariadb-service:3306"
+        - name: WORDPRESS_DB_USER
+          value: "wpuser"
+        - name: WORDPRESS_DB_PASSWORD
+          value: "wppassword"
+        - name: WORDPRESS_DB_NAME
+          value: "wordpress"
+        ports:
+        - containerPort: 80
+        volumeMounts:
+        - name: wordpress-storage
+          mountPath: /var/www/html
+      volumes:
+      - name: wordpress-storage
+        persistentVolumeClaim:
+          claimName: wordpress-pvc
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress-service
+  labels:
+    owner: JF
+spec:
+  type: NodePort
+  selector:
+    app: wordpress
+  ports:
+  - port: 80
+    targetPort: 80
+    nodePort: 30080
+EOF
+
+kubectl apply -f wordpress-deployment.yaml
+
+# Wacht tot WordPress ready is
+kubectl wait --for=condition=ready pod -l app=wordpress --timeout=120s
+
+# Stap 3: Verifieer toegang tot WordPress
+kubectl get svc wordpress-service
+echo "WordPress bereikbaar op: http://localhost:30080"
+
+# Test met curl
+curl -I http://localhost:30080
+
+# Stap 4 & 5: Apache + ubi10-init met gedeelde storage
+
+# Bestand: shared-pvc.yaml
+cat <<EOF > shared-pvc.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: shared-pvc
+  labels:
+    owner: JF
+spec:
+  accessModes:
+    - ReadWriteMany
+  resources:
+    requests:
+      storage: 500Mi
+EOF
+
+kubectl apply -f shared-pvc.yaml
+
+# Bestand: apache-pod.yaml
+cat <<EOF > apache-pod.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: apache-jf
+  labels:
+    app: apache
+    owner: JF
+spec:
+  containers:
+  - name: apache
+    image: httpd:2.4-alpine
+    ports:
+    - containerPort: 80
+    volumeMounts:
+    - name: shared-storage
+      mountPath: /usr/local/apache2/htdocs
+  volumes:
+  - name: shared-storage
+    persistentVolumeClaim:
+      claimName: shared-pvc
+EOF
+
+kubectl apply -f apache-pod.yaml
+
+# Bestand: ubi10-init-pod.yaml
+cat <<EOF > ubi10-init-pod.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ubi10-init-jf
+  labels:
+    app: ubi10-init
+    owner: JF
+spec:
+  containers:
+  - name: ubi10
+    image: registry.access.redhat.com/ubi10/ubi-init:latest
+    command: ["/sbin/init"]
+    securityContext:
+      privileged: true
+    volumeMounts:
+    - name: shared-storage
+      mountPath: /shared
+  volumes:
+  - name: shared-storage
+    persistentVolumeClaim:
+      claimName: shared-pvc
+EOF
+
+kubectl apply -f ubi10-init-pod.yaml
+
+# Wacht tot pods ready zijn
+kubectl wait --for=condition=ready pod/apache-jf --timeout=60s
+kubectl wait --for=condition=ready pod/ubi10-init-jf --timeout=60s
+
+# Stap 5: Maak files aan op ubi10-init pod
+# Exec in ubi10-init pod en maak files aan
+kubectl exec -it ubi10-init-jf -- sh -c "echo '<h1>JF - Test bestand van ubi10-init</h1>' > /shared/index.html"
+kubectl exec -it ubi10-init-jf -- sh -c "echo '<h2>JF - Tweede bestand</h2>' > /shared/test.html"
+kubectl exec -it ubi10-init-jf -- sh -c "echo 'JF - Text bestand' > /shared/readme.txt"
+
+# Verifieer dat files bestaan op ubi10-init
+kubectl exec ubi10-init-jf -- ls -la /shared
+
+# Verifieer dat dezelfde files beschikbaar zijn in Apache pod
+kubectl exec apache-jf -- ls -la /usr/local/apache2/htdocs
+
+# Expose Apache pod via service voor externe toegang
+cat <<EOF > apache-service.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: apache-service
+  labels:
+    owner: JF
+spec:
+  type: NodePort
+  selector:
+    app: apache
+  ports:
+  - port: 80
+    targetPort: 80
+    nodePort: 30081
+EOF
+
+kubectl apply -f apache-service.yaml
+
+# Test Apache toegang
+curl http://localhost:30081
+curl http://localhost:30081/test.html
+
+
+# SCREENSHOTS VOOR INLEVERING:
+
+# Screenshot 1: Cluster nodes
+kubectl get nodes -o wide
+
+# Screenshot 2: PVCs (Persistent Volume Claims)
+kubectl get pvc
+
+# Screenshot 3: WordPress deployment en pods
+kubectl get deployment,pods -l app=wordpress -o wide
+kubectl get deployment,pods -l app=mariadb -o wide
+
+# Screenshot 4: WordPress service en toegang
+kubectl get svc wordpress-service
+curl -I http://localhost:30080
+
+# Screenshot 5: Apache en ubi10-init pods met gedeelde storage
+kubectl get pods apache-jf ubi10-init-jf -o wide
+
+# Screenshot 6: Files op ubi10-init pod
+kubectl exec ubi10-init-jf -- ls -la /shared
+
+# Screenshot 7: Dezelfde files op Apache pod
+kubectl exec apache-jf -- ls -la /usr/local/apache2/htdocs
+
+# Screenshot 8: Apache service toegang
+kubectl get svc apache-service
+curl http://localhost:30081
+
+# Screenshot 9: Bewijs WordPress werkt (browser screenshot)
+# Open in browser: http://localhost:30080
+
+# Screenshot 10: YAML bestanden met JF initialen
+cat mariadb-pvc.yaml
+cat wordpress-pvc.yaml
+cat shared-pvc.yaml
+
+
+UITLEG CONCEPTEN:
+
+1. Persistent Storage in Kubernetes:
+   - PersistentVolume (PV): Storage resource in cluster
+   - PersistentVolumeClaim (PVC): Request voor storage door pod
+   - AccessModes:
+     * ReadWriteOnce (RWO): 1 node kan lezen/schrijven
+     * ReadWriteMany (RWX): Meerdere nodes kunnen lezen/schrijven
+     * ReadOnlyMany (ROX): Meerdere nodes kunnen lezen
+
+2. WordPress + MariaDB Setup:
+   - MariaDB: Database voor WordPress
+   - Environment variables voor DB credentials
+   - Services voor communicatie tussen pods
+   - Persistent storage voor data en uploads
+
+3. Gedeelde Storage tussen Pods:
+   - Zelfde PVC in meerdere pods mounten
+   - ReadWriteMany access mode vereist
+   - In k3d: local-path provisioner ondersteunt RWX
+   - Files op 1 pod zijn direct zichtbaar in andere pod
+
+4. NodePort Service:
+   - Exposeert service op statische poort (30000-32767)
+   - Toegankelijk via <NodeIP>:<NodePort>
+   - Voor k3d: localhost:<NodePort>
+
+5. Volume Mounts:
+   - volumeMounts: waar volume in container gemount wordt
+   - volumes: definitie van volume (PVC, ConfigMap, etc)
+   - mountPath: pad in container
+
+
+VEELGEMAAKTE FOUTEN:
+
+1. ReadWriteMany niet ondersteund
+   → k3d local-path provisioner ondersteunt RWX sinds v1.20+
+   → Voor oudere versies: gebruik NFS of andere storage class
+
+2. WordPress kan MariaDB niet bereiken
+   → Wacht tot MariaDB pod ready is voor WordPress te deployen
+   → Controleer service naam in WORDPRESS_DB_HOST
+
+3. Files niet zichtbaar tussen pods
+   → Controleer of zelfde PVC gebruikt wordt
+   → Verifieer mount paths in beide pods
+
+4. NodePort niet bereikbaar
+   → Zorg dat cluster gemaakt is met -p flag
+   → Controleer firewall/security settings
+
+5. Pods blijven in Pending
+   → Controleer PVC status: kubectl describe pvc
+   → Zorg dat storage class beschikbaar is
+
+
+################################################################################
+# OEFENING 16: VAN PODMAN NAAR KUBERNETES
+################################################################################
+
+Oefening 16: Van Podman naar Kubernetes - DEEL 1
+
+OPGAVE:
+Maak een WordPress website aan in Kubernetes met persistente opslag.
+De site moet bereikbaar zijn op poort 9999 en data moet bewaard blijven 
+na het verwijderen van alle resources (inclusief PVCs).
+
+Website naam: websiteJF
+Email: je PXL email adres
+
+STAPPEN:
+
+1) Maak een nieuw k3d cluster aan voor WordPress
+# Cluster met 1 server (control plane) en 1 agent (worker node)
+# Poort 9999 wordt direct gemapped (zoals in opgave gevraagd)
+k3d cluster create wordpress-cluster \
+  -s 1 \
+  -a 1 \
+  --port 9999:30999@server:0
+
+# Controleer cluster
+kubectl config use-context k3d-wordpress-cluster
+kubectl get nodes
+
+
+2) Maak PersistentVolumes aan met hostPath storage
+
+# Database PersistentVolume
+cat <<'EOF' > pvdatabase.jf.yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-database-jf
+  labels:
+    app: wordpress-jf
+    owner: JF
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: /srv/k8s-jf/mysql
+    type: DirectoryOrCreate
+EOF
+
+# WordPress PersistentVolume
+cat <<'EOF' > pvwordpress.jf.yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: pv-wordpress-jf
+  labels:
+    app: wordpress-jf
+    owner: JF
+spec:
+  capacity:
+    storage: 5Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  hostPath:
+    path: /srv/k8s-jf/wordpress
+    type: DirectoryOrCreate
+EOF
+
+kubectl apply -f pvdatabase.jf.yaml
+kubectl apply -f pvwordpress.jf.yaml
+
+
+3) Maak PersistentVolumeClaims aan
+
+# Database PVC (met lege storageClassName en selector voor manual binding)
+cat <<'EOF' > pvcdatabase.jf.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-database-jf
+  labels:
+    owner: JF
+spec:
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  selector:
+    matchLabels:
+      app: wordpress-jf
+EOF
+
+# WordPress PVC
+cat <<'EOF' > pvcwordpress.jf.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-wordpress-jf
+  labels:
+    owner: JF
+spec:
+  storageClassName: ""
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 5Gi
+  selector:
+    matchLabels:
+      app: wordpress-jf
+EOF
+
+kubectl apply -f pvcdatabase.jf.yaml
+kubectl apply -f pvcwordpress.jf.yaml
+
+
+4) Maak MariaDB Pod en Service
+
+# MariaDB Pod met persistente storage
+cat <<'EOF' > poddatabase.jf.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: mysql-jf
+  labels:
+    app: wordpress-jf
+    tier: database
+    owner: JF
+spec:
+  containers:
+  - name: mariadb
+    image: mariadb:10.11
+    ports:
+    - containerPort: 3306
+    env:
+    - name: MARIADB_ROOT_PASSWORD
+      value: "rootpassword"
+    - name: MARIADB_DATABASE
+      value: "wordpress"
+    - name: MARIADB_USER
+      value: "wpuser"
+    - name: MARIADB_PASSWORD
+      value: "wppassword"
+    volumeMounts:
+    - name: mysql-storage
+      mountPath: /var/lib/mysql
+  volumes:
+  - name: mysql-storage
+    persistentVolumeClaim:
+      claimName: pvc-database-jf
+EOF
+
+# Database Service (ClusterIP voor interne communicatie)
+cat <<'EOF' > servicedatabase.jf.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: mysql-jf
+  labels:
+    app: wordpress-jf
+    tier: database
+    owner: JF
+spec:
+  type: ClusterIP
+  selector:
+    app: wordpress-jf
+    tier: database
+  ports:
+  - protocol: TCP
+    port: 3306
+    targetPort: 3306
+EOF
+
+kubectl apply -f servicedatabase.jf.yaml
+kubectl apply -f poddatabase.jf.yaml
+
+
+5) Maak WordPress Pod en Service
+
+# WordPress Pod met persistente storage
+cat <<'EOF' > podwordpress.jf.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: wordpress-jf
+  labels:
+    app: wordpress-jf
+    tier: frontend
+    owner: JF
+spec:
+  containers:
+  - name: wordpress
+    image: wordpress:latest
+    ports:
+    - containerPort: 80
+    env:
+    - name: WORDPRESS_DB_HOST
+      value: "mysql-jf:3306"
+    - name: WORDPRESS_DB_USER
+      value: "wpuser"
+    - name: WORDPRESS_DB_PASSWORD
+      value: "wppassword"
+    - name: WORDPRESS_DB_NAME
+      value: "wordpress"
+    volumeMounts:
+    - name: wordpress-storage
+      mountPath: /var/www/html
+  volumes:
+  - name: wordpress-storage
+    persistentVolumeClaim:
+      claimName: pvc-wordpress-jf
+EOF
+
+# WordPress Service (NodePort voor externe toegang op poort 9999)
+cat <<'EOF' > servicewordpress.jf.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: wordpress-jf
+  labels:
+    app: wordpress-jf
+    tier: frontend
+    owner: JF
+spec:
+  type: NodePort
+  selector:
+    app: wordpress-jf
+    tier: frontend
+  ports:
+  - protocol: TCP
+    port: 80
+    targetPort: 80
+    nodePort: 30999
+EOF
+
+kubectl apply -f servicewordpress.jf.yaml
+kubectl apply -f podwordpress.jf.yaml
+
+
+6) Wacht tot alle pods ready zijn en test de setup
+# Wacht op pods
+kubectl wait --for=condition=Ready pod/mysql-jf --timeout=120s
+kubectl wait --for=condition=Ready pod/wordpress-jf --timeout=120s
+
+# Controleer status
+kubectl get pv,pvc,pod,svc
+
+# Test WordPress toegang (vanaf VM)
+curl -I http://192.168.112.10:9999
+
+# Vanaf Windows host: open browser en ga naar:
+# http://192.168.112.10:9999
+
+
+7) Configureer WordPress via browser (VANAF WINDOWS HOST)
+# Open browser op je Windows laptop en ga naar:
+# http://192.168.112.10:9999
+#
+# WordPress installatie:
+# - Taal: Nederlands (of Engels)
+# - Site titel: websiteJF
+# - Gebruikersnaam: admin
+# - Wachtwoord: (sterk wachtwoord)
+# - Email: <jouw-pxl-email>@pxl.be
+# - Klik "WordPress installeren"
+#
+# Log in en maak een testpost aan om te verifiëren dat alles werkt
+
+
+8) Test persistentie door resources te verwijderen en opnieuw aan te maken
+# BELANGRIJK: Verwijder in deze volgorde!
+# Eerst pods verwijderen
+kubectl delete -f poddatabase.jf.yaml
+kubectl delete -f podwordpress.jf.yaml
+
+# Dan services verwijderen
+kubectl delete -f servicedatabase.jf.yaml
+kubectl delete -f servicewordpress.jf.yaml
+
+# Dan PVCs verwijderen (data blijft behouden op PV!)
+kubectl delete -f pvcdatabase.jf.yaml
+kubectl delete -f pvcwordpress.jf.yaml
+
+# PVs blijven behouden met Retain policy en status wordt "Released"
+kubectl get pv
+
+# PROBLEEM: PVs zijn nu "Released" en hebben nog oude claimRef
+# OPLOSSING: Verwijder de claimRef uit beide PVs
+
+# Patch database PV om claimRef te verwijderen
+kubectl patch pv pv-database-jf -p '{"spec":{"claimRef": null}}'
+
+# Patch wordpress PV om claimRef te verwijderen  
+kubectl patch pv pv-wordpress-jf -p '{"spec":{"claimRef": null}}'
+
+# Verifieer dat PVs nu "Available" zijn
+kubectl get pv
+
+# Maak alles opnieuw aan in juiste volgorde
+# Eerst PVCs (binden opnieuw aan bestaande PVs met data)
+kubectl apply -f pvcdatabase.jf.yaml
+kubectl apply -f pvcwordpress.jf.yaml
+
+# Wacht even tot PVCs binden
+sleep 5
+kubectl get pvc
+
+# Dan services
+kubectl apply -f servicedatabase.jf.yaml
+kubectl apply -f servicewordpress.jf.yaml
+
+# Ten slotte pods
+kubectl apply -f poddatabase.jf.yaml
+kubectl apply -f podwordpress.jf.yaml
+
+# Wacht tot pods ready zijn
+kubectl wait --for=condition=Ready pod/mysql-jf --timeout=120s
+kubectl wait --for=condition=Ready pod/wordpress-jf --timeout=120s
+
+# Verifieer dat je website nog steeds bestaat op http://192.168.112.10:9999
+# Je WordPress site met alle posts en instellingen moet nog aanwezig zijn!
+
+
+# SCREENSHOTS VOOR INLEVERING DEEL 1:
+
+echo "=== Screenshot 1: Cluster nodes ==="
+kubectl get nodes -o wide
+
+echo "=== Screenshot 2: YAML bestanden met JF initialen ==="
+ls -l pv*.jf.yaml pvc*.jf.yaml pod*.jf.yaml service*.jf.yaml
+
+echo "=== Screenshot 3: PersistentVolumes met Retain policy ==="
+kubectl get pv -o wide
+
+echo "=== Screenshot 4: PersistentVolumeClaims gebonden aan PVs ==="
+kubectl get pvc -o wide
+
+echo "=== Screenshot 5: Database pod en service ==="
+kubectl get pod mysql-jf -o wide
+kubectl get svc mysql-jf
+
+echo "=== Screenshot 6: WordPress pod en service ==="
+kubectl get pod wordpress-jf -o wide
+kubectl get svc wordpress-jf
+
+echo "=== Screenshot 7: Alle resources samen ==="
+kubectl get pv,pvc,pod,svc
+
+echo "=== Screenshot 8: WordPress toegankelijk via curl ==="
+curl -I http://192.168.112.10:9999
+
+echo "=== Screenshot 9: WordPress configuratie (WINDOWS BROWSER) ==="
+# Open browser op je WINDOWS laptop: http://192.168.112.10:9999
+# Screenshot van WordPress dashboard met websiteJF als titel
+# Dit bewijst dat de site bereikbaar is vanaf je Windows host!
+
+echo "=== Screenshot 10: Test na verwijderen resources ==="
+# Na stap 8: screenshot dat website nog steeds werkt
+# Toon ook kubectl get pv om te zien dat PVs behouden zijn
+
+echo "=== Screenshot 11: Bewijs van persistentie ==="
+kubectl describe pv pv-database-jf | grep -A 3 "Status:"
+kubectl describe pv pv-wordpress-jf | grep -A 3 "Status:"
+
+
+BELANGRIJKE CONCEPTEN:
+
+1. PersistentVolume Reclaim Policy:
+   - Retain: PV blijft bestaan na verwijderen van PVC (data behouden)
+   - Delete: PV wordt verwijderd samen met PVC (data verloren)
+   - Recycle: PV wordt hergebruikt na basic cleanup (deprecated)
+
+2. Manual PV/PVC Binding:
+   - storageClassName: "" in PVC zorgt voor manual binding
+   - selector met matchLabels in PVC matched met labels op PV
+   - Dit voorkomt automatische provisioning door default storage class
+   - PV moet label "app: wordpress-jf" hebben voor binding te werken
+
+3. hostPath Volumes:
+   - Gebruikt directory op de node als storage
+   - type: DirectoryOrCreate maakt directory aan als deze niet bestaat
+   - Data blijft op node staan, ook na pod deletion
+   - Niet geschikt voor productie (node-specific, geen HA)
+
+4. Pod vs Deployment:
+   - Deze oefening gebruikt Pods (niet Deployments)
+   - Pods worden niet automatisch herstart bij falen
+   - Deployment zou meerdere replicas en auto-restart bieden
+   - Voor demo/test: Pods zijn voldoende
+
+5. Service Types:
+   - ClusterIP (mysql-jf): alleen binnen cluster bereikbaar
+   - NodePort (wordpress-jf): bereikbaar van buitenaf via node IP + port
+
+
+VEELGEMAAKTE FOUTEN:
+
+1. PVCs blijven Pending
+   → Zorg dat storageClassName: "" is ingesteld in PVC
+   → Controleer of selector matchLabels matched met PV labels
+   → PV moet label "app: wordpress-jf" hebben
+   → Verify: kubectl describe pvc <naam>
+
+2. Pods kunnen PVC niet claimen
+   → PV en PVC moeten zelfde accessModes hebben
+   → PV moet genoeg capacity hebben voor PVC request
+   → Check: kubectl get pv,pvc -o wide
+
+3. WordPress kan database niet bereiken
+   → Wacht tot mysql-jf pod Running is voor wordpress-jf te starten
+   → Controleer service naam in WORDPRESS_DB_HOST (moet mysql-jf zijn)
+   → Test: kubectl exec wordpress-jf -- ping mysql-jf
+
+4. Data verdwijnt na verwijderen resources
+   → Verify persistentVolumeReclaimPolicy: Retain in PV
+   → PV status wordt "Released" na PVC deletion (niet "Available")
+   → Bij opnieuw binden: PVC selector moet matchen met PV labels
+   → Data blijft op /srv/k8s-jf/mysql en /srv/k8s-jf/wordpress
+
+5. NodePort niet bereikbaar van buitenaf (vanaf Windows)
+   → k3d cluster moet aangemaakt zijn met -p "9999:30999@server:0"
+   → Gebruik VM IP, NIET localhost: http://192.168.112.10:9999
+   → Controleer VM firewall: sudo ufw status
+   → Test vanaf VM: curl http://192.168.112.10:9999
+   → Test vanaf Windows browser: http://192.168.112.10:9999
+
+6. WordPress blijft installation scherm tonen na herstel
+   → Dit is normaal als wp-config.php nog niet bestaat
+   → Na eerste install wordt config in PV opgeslagen
+   → Bij tweede install: config wordt geladen, WordPress werkt direct
+
+
+TROUBLESHOOTING COMMANDO'S:
+
+# Check pod logs voor errors
+kubectl logs mysql-jf
+kubectl logs wordpress-jf
+
+# Beschrijf resources voor details
+kubectl describe pod mysql-jf
+kubectl describe pvc pvc-database-jf
+kubectl describe pv pv-database-jf
+
+# Exec in pod voor debugging
+kubectl exec -it mysql-jf -- bash
+kubectl exec -it wordpress-jf -- bash
+
+# Check welke node gebruikt wordt
+kubectl get pods -o wide
+
+# Verifieer data op node (als je SSH toegang hebt)
+# ssh naar node en check:
+# ls -la /srv/k8s-jf/mysql
+# ls -la /srv/k8s-jf/wordpress
+
+
+################################################################################
+# OEFENING 16: VAN PODMAN NAAR KUBERNETES - DEEL 2 & 3
+################################################################################
+
+Oefening 16: Van Podman naar Kubernetes - DEEL 2: DRUPAL IN PODMAN
+
+OPGAVE:
+Installeer Drupal in een Podman pod met persistente opslag.
+De website moet bereikbaar zijn op poort 8080.
+
+Website naam: websiteJF
+Email: je PXL email adres
+Onderhoudsaccount: voornaam (bijv. Jens) met zelfgekozen wachtwoord
+Named volumes: drupal-mysql en drupal-files
+BELANGRIJK: Alleen /var/www/html/sites/default/files koppelen!
+
+STAPPEN:
+
+1) Maak named volumes aan voor Drupal
+# Database volume
+podman volume create drupal-mysql
+
+# Files volume (voor uploads en configuratie)
+podman volume create drupal-files
+
+# Verifieer volumes
+podman volume ls
+
+
+2) Maak een Podman pod voor Drupal
+# Pod met poort mapping (8080 host → 80 container)
+podman pod create \
+  --name drupal-pod-jf \
+  -p 8080:80
+
+
+3) Start MariaDB container in de pod
+podman run -d \
+  --name drupal-mariadb-jf \
+  --pod drupal-pod-jf \
+  -e MARIADB_ROOT_PASSWORD="rootpass123" \
+  -e MARIADB_DATABASE=drupal \
+  -e MARIADB_USER=drupal \
+  -e MARIADB_PASSWORD="drupalpass123" \
+  -v drupal-mysql:/var/lib/mysql:Z \
+  docker.io/library/mariadb:11
+
+# Wacht even tot MariaDB klaar is
+sleep 10
+
+
+4) Start Drupal container in de pod
+podman run -d \
+  --name drupal-web-jf \
+  --pod drupal-pod-jf \
+  -v drupal-files:/var/www/html/sites/default/files:Z \
+  docker.io/library/drupal:10-apache
+
+
+5) Fix permissies voor Drupal files directory
+# Drupal draait als www-data (UID 33)
+# Unshare geeft toegang tot host filesystem vanuit rootless podman context
+podman unshare chown -R 33:33 \
+  $(podman volume inspect drupal-files --format '{{.Mountpoint}}')
+
+podman unshare chmod -R 775 \
+  $(podman volume inspect drupal-files --format '{{.Mountpoint}}')
+
+
+6) Verifieer dat Drupal draait
+# Check pod status
+podman pod ps
+
+# Check containers in pod
+podman ps --pod
+
+# Test toegang
+curl -I http://localhost:8080
+
+
+7) Configureer Drupal via browser
+# Vanaf Windows: SSH tunnel opzetten
+# Op Windows PowerShell/CMD:
+# ssh -L 8081:localhost:8080 student@192.168.112.10
+# 
+# LET OP: Als je "Permission denied" error krijgt op poort 8080:
+# - Poort 8080 is al in gebruik op Windows
+# - Gebruik een andere poort zoals 8081, 8082, etc.
+# - Pas onderstaande URL aan naar de gekozen poort
+
+# Open browser op Windows en ga naar: http://localhost:8081
+
+# Drupal installatie wizard:
+# 1. Kies taal: English (of Nederlands)
+# 2. Installatieprofiel: Standard
+# 3. Database configuratie:
+#    - Database type: MySQL, MariaDB, Percona Server, or equivalent
+#    - Database name: drupal
+#    - Database username: drupal
+#    - Database password: drupalpass123
+#    - ADVANCED OPTIONS (klik om uit te klappen):
+#      * Host: 127.0.0.1  ← BELANGRIJK: gebruik IP, NIET localhost!
+#      * Port: 3306
+#
+#    LET OP: "localhost" probeert Unix socket te gebruiken en faalt!
+#    Gebruik altijd 127.0.0.1 voor TCP/IP verbinding tussen containers.
+# 4. Site configuratie:
+#    - Site name: websiteJF
+#    - Site email: <jouw-studentnummer>@student.pxl.be
+#    - Username: Jens (je voornaam)
+#    - Password: (kies zelf een sterk wachtwoord)
+#    - Email: <jouw-studentnummer>@student.pxl.be
+# 5. Klik "Save and continue"
+
+# Maak een test-artikel aan om te verifiëren dat alles werkt
+
+
+# SCREENSHOTS VOOR INLEVERING DEEL 2:
+
+echo "=== Screenshot 1: Podman volumes ==="
+podman volume ls
+
+echo "=== Screenshot 2: Drupal pod ==="
+podman pod ps
+
+echo "=== Screenshot 3: Containers in pod ==="
+podman ps --pod --filter pod=drupal-pod-jf
+
+echo "=== Screenshot 4: Volume mountpoints ==="
+podman volume inspect drupal-mysql --format '{{.Mountpoint}}'
+podman volume inspect drupal-files --format '{{.Mountpoint}}'
+
+echo "=== Screenshot 5: Drupal toegankelijk ==="
+curl -I http://localhost:8080
+
+echo "=== Screenshot 6: Drupal configuratie (browser) ==="
+# Screenshot van Drupal dashboard met websiteJF als site naam
+
+
+################################################################################
+# OEFENING 16: VAN PODMAN NAAR KUBERNETES - DEEL 3 & 4
+################################################################################
+
+Oefening 16: Van Podman naar Kubernetes - DEEL 3: KUBERNETES MANIFEST GENEREREN
+
+OPGAVE:
+Genereer een Kubernetes manifest uit de Podman pod en pas het aan voor gebruik.
+
+STAPPEN:
+
+1) Genereer Kubernetes YAML uit Podman pod
+# Podman kan automatisch een Kubernetes manifest genereren
+podman generate kube drupal-pod-jf > drupaljf.yaml
+
+# Bekijk het gegenereerde bestand
+cat drupaljf.yaml
+
+
+2) Analyseer het gegenereerde manifest
+# Het gegenereerde bestand bevat:
+# - Pod definitie met beide containers (mariadb en drupal)
+# - Volume definities (maar nog niet als PVCs!)
+# - Environment variables
+# - Port mappings
+
+# PROBLEEM: Podman volumes worden als hostPath gegenereerd
+# We moeten dit handmatig aanpassen naar PersistentVolumeClaims
+
+
+3) Maak PersistentVolumeClaims aan voor Kubernetes
+cat <<'EOF' > pvc-drupal-mysql.jf.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-drupal-mysql-jf
+  labels:
+    app: drupal-jf
+    owner: JF
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+EOF
+
+cat <<'EOF' > pvc-drupal-files.jf.yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: pvc-drupal-files-jf
+  labels:
+    app: drupal-jf
+    owner: JF
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 2Gi
+EOF
+
+# Apply de PVCs (in kubernetes cluster)
+kubectl apply -f pvc-drupal-mysql.jf.yaml
+kubectl apply -f pvc-drupal-files.jf.yaml
+
+
+4) Maak een opgeruimde Drupal pod manifest
+# Handmatig aangepaste versie met correcte PVCs en labels
+cat <<'EOF' > pod-drupal.jf.yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: drupal-jf
+  labels:
+    app: drupal-jf
+    owner: JF
+spec:
+  containers:
+  - name: mariadb
+    image: mariadb:11
+    ports:
+    - containerPort: 3306
+    env:
+    - name: MARIADB_ROOT_PASSWORD
+      value: "rootpass123"
+    - name: MARIADB_DATABASE
+      value: drupal
+    - name: MARIADB_USER
+      value: drupal
+    - name: MARIADB_PASSWORD
+      value: "drupalpass123"
+    volumeMounts:
+    - name: mysql-storage
+      mountPath: /var/lib/mysql
+  
+  - name: drupal
+    image: drupal:10-apache
+    ports:
+    - containerPort: 80
+    volumeMounts:
+    - name: files-storage
+      mountPath: /var/www/html/sites/default/files
+  
+  volumes:
+  - name: mysql-storage
+    persistentVolumeClaim:
+      claimName: pvc-drupal-mysql-jf
+  - name: files-storage
+    persistentVolumeClaim:
+      claimName: pvc-drupal-files-jf
+EOF
+
+
+5) Maak Services aan voor Drupal
+# MariaDB service (ClusterIP, intern gebruik)
+cat <<'EOF' > service-mariadb.jf.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: mariadb-jf
+  labels:
+    app: drupal-jf
+    owner: JF
+spec:
+  type: ClusterIP
+  selector:
+    app: drupal-jf
+  ports:
+  - port: 3306
+    targetPort: 3306
+EOF
+
+# Drupal service (NodePort, externe toegang op poort 8080)
+cat <<'EOF' > service-drupal.jf.yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: drupal-jf
+  labels:
+    app: drupal-jf
+    owner: JF
+spec:
+  type: NodePort
+  selector:
+    app: drupal-jf
+  ports:
+  - port: 80
+    targetPort: 80
+    nodePort: 30808
+EOF
+
+
+6) Deploy Drupal naar Kubernetes (OPTIONEEL - voor testen)
+# Let op: dit is optioneel, want we moeten eerst Podman pod verwijderen
+# kubectl apply -f pvc-drupal-mysql.jf.yaml
+# kubectl apply -f pvc-drupal-files.jf.yaml
+# kubectl apply -f service-mariadb.jf.yaml
+# kubectl apply -f service-drupal.jf.yaml
+# kubectl apply -f pod-drupal.jf.yaml
+
+# Wacht tot pod ready is
+# kubectl wait --for=condition=Ready pod/drupal-jf --timeout=120s
+
+# Test toegang
+# curl -I http://192.168.112.10:8080
+
+
+# SCREENSHOTS VOOR INLEVERING DEEL 3:
+
+echo "=== Screenshot 1: Gegenereerd Kubernetes manifest ==="
+cat drupaljf.yaml
+
+echo "=== Screenshot 2: Opgeruimde manifest bestanden ==="
+ls -l pvc-drupal*.jf.yaml pod-drupal.jf.yaml service*.jf.yaml
+
+echo "=== Screenshot 3: PVCs aangemaakt ==="
+kubectl get pvc -l app=drupal-jf
+
+echo "=== Screenshot 4: Drupal pod YAML ==="
+cat pod-drupal.jf.yaml
+
+
+################################################################################
+# OEFENING 16: VAN PODMAN NAAR KUBERNETES - DEEL 5 & 6
+################################################################################
+
+Oefening 16: Van Podman naar Kubernetes - DEEL 5: CLEANUP & BACKUP
+
+OPGAVE:
+Verwijder de Podman pod en maak backup van de manifests.
+
+STAPPEN:
+
+1) Stop en verwijder de Podman pod
+# Stop de pod (stopt alle containers in de pod)
+podman pod stop drupal-pod-jf
+
+# Verwijder de pod (verwijdert ook alle containers)
+podman pod rm drupal-pod-jf
+
+# Verifieer dat pod weg is
+podman pod ps
+
+# BELANGRIJK: Volumes blijven bestaan!
+podman volume ls
+
+
+2) Optioneel: Verwijder ook de volumes (als je clean slate wilt)
+# LET OP: Dit verwijdert alle Drupal data!
+# podman volume rm drupal-mysql drupal-files
+
+
+3) Maak backup van het originele gegenereerde manifest
+# Kopieer drupaljf.yaml naar backup
+cp drupaljf.yaml drupaljf.yaml.backup
+
+# Hernoem origineel naar ~ extensie (zoals gevraagd in opgave)
+mv drupaljf.yaml drupaljf.yaml~
+
+# Verifieer backup
+ls -la drupal*.yaml*
+
+
+4) De opgeruimde bestanden zijn klaar voor gebruik
+# Deze bestanden zijn production-ready:
+# - pvc-drupal-mysql.jf.yaml
+# - pvc-drupal-files.jf.yaml
+# - pod-drupal.jf.yaml
+# - service-mariadb.jf.yaml
+# - service-drupal.jf.yaml
+
+# Toon alle bestanden
+ls -l *drupal*.yaml*
+
+
+# SCREENSHOTS VOOR INLEVERING DEEL 5:
+
+echo "=== Screenshot 1: Podman pod verwijderd ==="
+podman pod ps -a
+
+echo "=== Screenshot 2: Volumes nog aanwezig ==="
+podman volume ls
+
+echo "=== Screenshot 3: Backup bestanden ==="
+ls -la drupaljf.yaml*
+
+echo "=== Screenshot 4: Alle Drupal manifests ==="
+ls -l pvc-drupal*.jf.yaml pod-drupal.jf.yaml service*.jf.yaml
+
+
+################################################################################
+# OEFENING 16: VAN PODMAN NAAR KUBERNETES - DEEL 7: DEPLOY NAAR KUBERNETES
+################################################################################
+
+Oefening 16: Van Podman naar Kubernetes - DEEL 7: FINALE DEPLOYMENT
+
+OPGAVE:
+Deploy de opgeruimde Drupal manifests naar Kubernetes en test persistentie.
+
+STAPPEN:
+
+1) Zorg dat je in de juiste cluster context bent
+# Gebruik de wordpress-cluster
+kubectl config use-context k3d-wordpress-cluster
+kubectl get nodes
+
+
+2) Deploy alle Drupal resources naar Kubernetes
+# PVCs eerst
+kubectl apply -f pvc-drupal-mysql.jf.yaml
+kubectl apply -f pvc-drupal-files.jf.yaml
+
+# Dan services
+kubectl apply -f service-mariadb.jf.yaml
+kubectl apply -f service-drupal.jf.yaml
+
+# Ten slotte de pod
+kubectl apply -f pod-drupal.jf.yaml
+
+
+3) Wacht tot Drupal pod ready is
+kubectl wait --for=condition=Ready pod/drupal-jf --timeout=180s
+
+# Check status
+kubectl get pod,svc,pvc
+
+
+4) Configureer Drupal (als nog niet gedaan)
+# Open browser: http://192.168.112.10:30808
+# (NodePort 30808 is gemapped naar host poort 8080 in opgave)
+
+# Volg dezelfde installatie stappen als bij Podman:
+# - Site name: websiteJF
+# - Database: drupal / drupal / drupalpass123 @ 127.0.0.1:3306
+#   BELANGRIJK: gebruik 127.0.0.1, NIET localhost!
+# - Admin account: Jens (je voornaam) + zelfgekozen wachtwoord
+# - Email: <jouw-studentnummer>@student.pxl.be
+
+
+5) Test persistentie (OPTIONEEL)
+# Verwijder pod en PVCs
+kubectl delete -f pod-drupal.jf.yaml
+kubectl delete -f service-drupal.jf.yaml
+kubectl delete -f service-mariadb.jf.yaml
+kubectl delete -f pvc-drupal-mysql.jf.yaml
+kubectl delete -f pvc-drupal-files.jf.yaml
+
+# Maak opnieuw aan
+kubectl apply -f pvc-drupal-mysql.jf.yaml
+kubectl apply -f pvc-drupal-files.jf.yaml
+kubectl apply -f service-mariadb.jf.yaml
+kubectl apply -f service-drupal.jf.yaml
+kubectl apply -f pod-drupal.jf.yaml
+
+# Wacht en test
+kubectl wait --for=condition=Ready pod/drupal-jf --timeout=180s
+curl -I http://192.168.112.10:30808
+
+
+# SCREENSHOTS VOOR INLEVERING DEEL 7:
+
+echo "=== Screenshot 1: Drupal resources in Kubernetes ==="
+kubectl get pod,svc,pvc -l app=drupal-jf
+
+echo "=== Screenshot 2: Drupal pod details ==="
+kubectl describe pod drupal-jf
+
+echo "=== Screenshot 3: Drupal toegankelijk ==="
+curl -I http://192.168.112.10:30808
+
+echo "=== Screenshot 4: Drupal configuratie (browser) ==="
+# Open browser: http://192.168.112.10:30808
+# Screenshot van Drupal site met websiteJF als naam
+
+
+SAMENVATTING OEFENING 16:
+
+DEEL 1: WordPress in Kubernetes
+✓ Cluster: wordpress-cluster (1 server, 1 agent)
+✓ Poort: 9999 → NodePort 30999
+✓ PVs met Retain policy op /srv/k8s-jf/
+✓ PVCs met selector binding
+✓ MariaDB 10.11 pod + WordPress pod
+✓ Data blijft behouden na verwijderen resources
+
+DEEL 2: Drupal in Podman
+✓ Podman pod: drupal-pod-jf
+✓ Named volumes: drupal-mysql, drupal-files
+✓ Poort: 8080 (host) → 80 (container)
+✓ MariaDB 11 + Drupal 10-apache containers
+✓ Permissies gefixed met podman unshare
+
+DEEL 3: Kubernetes manifest genereren
+✓ podman generate kube → drupaljf.yaml
+✓ PVCs aangemaakt voor persistent storage
+✓ Opgeruimde manifests: pod-drupal.jf.yaml + services
+
+DEEL 4: Cleanup
+✓ Podman pod verwijderd
+✓ Backup: drupaljf.yaml → drupaljf.yaml~
+✓ Volumes blijven bestaan
+
+DEEL 5: Kubernetes deployment
+✓ Deploy naar k3d cluster
+✓ NodePort 30808 voor externe toegang
+✓ Test persistentie van data
+
+YOUTUBE VIDEO REQUIREMENTS:
+- 2 video's van elk 5 minuten
+- Video 1: WordPress workflow (Deel 1)
+  * Cluster aanmaken
+  * Manifests toepassen
+  * Website configureren (websiteJF)
+  * Persistentie testen (verwijderen + herstellen)
+  
+- Video 2: Drupal workflow (Deel 2-5)
+  * Podman pod aanmaken
+  * Drupal configureren (websiteJF)
+  * Kubernetes manifest genereren
+  * Cleanup en deployment naar Kubernetes
+
+
+BELANGRIJKE CONCEPTEN:
+
+1. Podman vs Docker:
+   - Podman is rootless (veiliger)
+   - Podman pods ≈ Kubernetes pods (multi-container)
+   - podman generate kube: native Kubernetes export
+
+2. Podman Volumes:
+   - Named volumes voor data persistentie
+   - :Z flag voor SELinux context (rootless)
+   - podman unshare voor permissie management
+
+3. Podman to Kubernetes:
+   - Generated manifest bevat hostPath (niet production-ready)
+   - Moet handmatig aangepast naar PVCs
+   - Services moeten apart aangemaakt worden
+
+4. Multi-container Pods:
+   - Containers delen network namespace (localhost werkt!)
+   - Drupal en MariaDB in zelfde pod
+   - Geen aparte service nodig voor database binnen pod
+
+
+VEELGEMAAKTE FOUTEN:
+
+1. Drupal files permissie errors
+   → Gebruik podman unshare chown -R 33:33
+   → UID 33 = www-data user in Drupal container
+
+2. Drupal kan database niet vinden
+   → Beide containers127.0.0.1 (NIET localhost - dat probeert Unix socket!)
+   → "localhost" geeft "No such file or directory" error
+   → In Kubernetes: gebruik service name (bijv. mariadb-jf) network namespace)
+   → In Kubernetes: gebruik service name
+
+3. Generated manifest werkt niet in Kubernetes
+   → hostPath volumes moeten vervangen door PVCs
+   → Services ontbreken (moeten apart gemaakt worden)
+   → Labels en selectors moeten consistent zijn
+
+4. NodePort 30808 niet bereikbaar
+   → Cluster moet aangemaakt zijn met juiste port mapping
+   → Of gebruik LoadBalancer/Ingress (buiten scope)
+
+5. Wrong volume mount in Drupal
+   → ALLEEN /var/www/html/sites/default/files mounten
+   → NIET hele /var/www/html (breekt Drupal core files)
+
+
+TROUBLESHOOTING COMMANDO'S:
+
+# Podman debugging
+podman pod logs drupal-pod-jf
+podman logs drupal-mariadb-jf
+podman logs drupal-web-jf
+podman exec -it drupal-web-jf bash
+
+# Kubernetes debugging
+kubectl logs drupal-jf -c mariadb
+kubectl logs drupal-jf -c drupal
+kubectl exec -it drupal-jf -c drupal -- bash
+kubectl describe pod drupal-jf
+
+# Volume inspection
+podman volume inspect drupal-mysql
+podman volume inspect drupal-files
+kubectl describe pvc pvc-drupal-mysql-jf
