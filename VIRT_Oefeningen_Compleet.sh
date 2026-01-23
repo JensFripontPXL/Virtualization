@@ -1020,7 +1020,64 @@ sudo mv /etc/resolv.conf.backup /etc/resolv.conf
 # Start Jellyfin Media Server op in een webbrowser op Server<jeintialen> en laat de pinguin zien. Doe hetzelfde op Client<jeinititialen>
 
 # Opgelet: laat in je screenshot duidelijk zien op welke VM je zit (zoals in onderstaande afbeelding bijvoorbeeld).
- 
+
+
+# OPLOSSING:
+# Create named volumes for media and configuration
+sudo podman volume create mediaJF
+sudo podman volume create configuratieJF
+
+# Verify volumes
+sudo podman volume ls
+sudo podman volume inspect mediaJF
+sudo podman volume inspect configuratieJF
+
+# Create macvlan network for container networking
+sudo podman network create \
+  --driver macvlan \
+  -o parent=ens160 \
+  --subnet 192.168.112.0/24 \
+  --gateway 192.168.112.1 \
+  macvlanJF
+
+# Pull and run Jellyfin container with static IP on macvlan network
+sudo podman pull docker.io/jellyfin/jellyfin:latest
+sudo podman run -d \
+  --name jellyfinJF \
+  --network macvlanJF \
+  --ip 192.168.112.101 \
+  -v mediaJF:/media \
+  -v configuratieJF:/config \
+  --restart=always \
+  docker.io/jellyfin/jellyfin:latest
+
+# Add host macvlan interface for connectivity
+sudo ip link add mvlan0 link ens160 type macvlan mode bridge
+sudo ip addr add 192.168.112.102/24 dev mvlan0
+sudo ip link set mvlan0 up
+
+# Test connectivity to container
+ping -c 3 192.168.112.101
+
+# Make host macvlan persistent via NetworkManager
+sudo nmcli connection add type macvlan ifname mvlan0 dev ens160 mode bridge ip4 192.168.112.102/24
+sudo nmcli connection up mvlan0
+
+# Add a penguin photo to the media volume
+MP=$(sudo podman volume inspect mediaJF -f '{{.Mountpoint}}')
+sudo mkdir -p "$MP/Pictures"
+
+# Download a royalty-free penguin photo to the media volume
+sudo cp /home/student/pinguin.jpg "$MP/Pictures/penguin.jpg"
+
+# Verify the file
+sudo ls -lh "$MP/Pictures/"
+
+# Setup Jellyfin: Open browser on ServerJF to http://192.168.112.101:8096
+# Complete initial setup (language, admin user, password)
+# Add a library: Type - Photos, Path - /media/Pictures
+# The penguin photo should appear in the Photos library.
+
 
 # Opgelet: VMware Workstation laat mogelijk maar één MAC-adres per virtuele adapter toe, tenzij je dat expliciet toestaat.
 # Los dit als volgt op:
@@ -1070,689 +1127,190 @@ podman diff <container-name>
 podman export <container-name> -o container.tar
 
 
-# ============================================
-# OEFENING 7 - Podman Compose
-# ============================================
+# 1. Zonder containerfile of podman-compose.
+# Voer deze oefening uit door commando’s na elkaar uit te voeren.
+# Je moet vertrekken van ubi10/ubi-image.
+# Stel in dat jouw voor- en achternaam wordt toont door te surfen naar localhost:8080 op de containerhost. 
+# Geef de container die je met portmapping aanmaakt de naam nginx<jevoornaam>. 
+# De inhoud van de webpagina met je voor- en achternaam wordt getoond aan de hand van een gekoppeld volume (~/nginx<jeinitialen> op de container host). 
+# Werk rootless.
+# Maak gebruik van het standaard rootless netwerk.
+# Toon uiteraard dat het werkt met curl. 
 
-# OPGAVE 1:
-# Installeer podman-compose op je systeem.
-#
+# Tip: maak eerst image met installatie nginx aan. 
+
 # OPLOSSING:
-# METHODE 1: Via pip (Python package manager):
-sudo dnf install -y python3-pip
-pip3 install podman-compose
+# A. Maak directory voor volume:
+mkdir -p ~/nginxjf
 
-# METHODE 2: Via DNF (indien beschikbaar in repos):
-sudo dnf install -y podman-compose
+# B. Maak index.html in volume:
+echo "<h1>Jens Fripont</h1>" > ~/nginxjf/index.html
 
-# METHODE 3: Direct van GitHub:
-sudo curl -o /usr/local/bin/podman-compose https://raw.githubusercontent.com/containers/podman-compose/main/podman_compose.py
-sudo chmod +x /usr/local/bin/podman-compose
+# C. Pull base image:
+podman pull registry.access.redhat.com/ubi10/ubi:latest
 
-# Verificatie:
-podman-compose --version
+# D. Maak custom image met nginx geïnstalleerd:
+podman run -d --name temp-nginx registry.access.redhat.com/ubi10/ubi:latest sleep infinity
+podman exec temp-nginx dnf install -y nginx
+podman commit temp-nginx nginx-jens
+podman stop temp-nginx
+podman rm temp-nginx
+
+# E. Start container met volume en port mapping:
+podman run -d --name nginxJens -p 8080:80 -v ~/nginxjf:/usr/share/nginx/html:Z nginx-jens nginx -g 'daemon off;'
+
+# F. Firewall aanpassen (indien nodig):
+sudo firewall-cmd --add-port=8080/tcp --permanent
+sudo firewall-cmd --reload
+
+# G. Verificatie:
+curl http://localhost:8080
+# Zou "<h1>Jens Fripont</h1>" moeten tonen
 
 
-# OPGAVE 2:
-# Maak een docker-compose.yml bestand voor een eenvoudige webserver setup met nginx.
-#
+# 2. Met containerfile.
+# Voor deze oefening maak je verplicht gebruik van Visual Studio Code.
+# Maak dezelfde oefening als oefening 1 maar maak gebruik van een containerfile om hetzelfde resultaat te bekomen. 
+# De image die je aanmaakt krijgt als naam nginx-<jevoornaam>. De container noemt ook nginx-<jevoornaam>. 
+# Opgelet: je moet nog altijd gebruik maken van een gekoppeld volume zodat de inhoud van de website kan veranderen wanneer de container draait (dynamisch binden).
+
 # OPLOSSING:
-# A. Directory maken:
-mkdir -p ~/compose-demo
-cd ~/compose-demo
+# A. Maak directory voor oefening:
+mkdir -p oef7-2
+cd oef7-2
 
-# B. docker-compose.yml maken:
-nano docker-compose.yml
+# B. Maak Containerfile:
+cat > Containerfile << 'EOF'
+FROM registry.access.redhat.com/ubi10/ubi:latest
+RUN dnf install -y nginx && dnf clean all
+COPY index.html /usr/share/nginx/html/index.html
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+EOF
 
-# Inhoud:
-# version: '3'
-# services:
-#   web:
-#     image: docker.io/library/nginx:latest
-#     container_name: nginx-web
-#     ports:
-#       - "8080:80"
-#     volumes:
-#       - ./html:/usr/share/nginx/html:ro
-#     restart: unless-stopped
+# C. Maak index.html:
+echo "<h1>Jens Fripont</h1>" > index.html
 
-# C. HTML directory en test pagina maken:
-mkdir -p html
-echo "<h1>Podman Compose Demo</h1>" > html/index.html
+# D. Bouw image:
+podman build -t nginx-Jens .
 
+# E. Maak volume directory:
+mkdir -p ~/nginxjf
 
-# OPGAVE 3:
-# Start de compose stack.
-#
-# OPLOSSING:
-cd ~/compose-demo
-podman-compose up -d
+# F. Start container met volume:
+podman run -d --name nginx-Jens -p 8080:80 -v ~/nginxjf:/usr/share/nginx/html:Z nginx-Jens
 
-# Verificatie:
-podman-compose ps
-podman ps
+# G. Verificatie:
 curl http://localhost:8080
 
 
-# OPGAVE 4:
-# Maak een multi-container applicatie met een database en webserver.
-# De stack moet bestaan uit:
-# - MariaDB database container
-# - WordPress webserver container
-# - Custom network
-# - Persistent volumes
-#
+# 3. Met podman-compose.
+# Voor deze oefening maak je verplicht gebruik van Visual Studio Code.
+# Pas oefening 1 aan zodat alles wordt aangemaakt met podman-compose in combinatie met containerfile. 
+# De image moet gebouwd worden via podman-compose.
+# Gebruik voor deze oefening onderstaande structuur (gebruik uiteraard dockerfile<jouweigenvoornaam>).
+
+# Gebruik dezelfde containernaam. Gebruik nu poort 9000 op de containerhost. Laat zeker een screenshot zoals onderstaande (niet vervaagd uiteraard).
+
 # OPLOSSING:
-# A. Nieuwe directory:
-mkdir -p ~/wordpress-stack
-cd ~/wordpress-stack
+# A. Maak directory structuur:
+mkdir -p oef7-3
+cd oef7-3
+mkdir -p dockerfileJens
 
-# B. docker-compose.yml maken:
-nano docker-compose.yml
+# B. Maak Containerfile in dockerfileJens:
+cat > dockerfileJens/Containerfile << 'EOF'
+FROM registry.access.redhat.com/ubi10/ubi:latest
+RUN dnf install -y nginx && dnf clean all
+EXPOSE 80
+CMD ["nginx", "-g", "daemon off;"]
+EOF
 
-# Inhoud:
-# version: '3.8'
-# 
-# services:
-#   db:
-#     image: docker.io/library/mariadb:latest
-#     container_name: wordpress-db
-#     volumes:
-#       - db_data:/var/lib/mysql
-#     environment:
-#       MYSQL_ROOT_PASSWORD: rootpassword
-#       MYSQL_DATABASE: wordpress
-#       MYSQL_USER: wpuser
-#       MYSQL_PASSWORD: wppassword
-#     networks:
-#       - wordpress-net
-#     restart: unless-stopped
-# 
-#   wordpress:
-#     image: docker.io/library/wordpress:latest
-#     container_name: wordpress-app
-#     depends_on:
-#       - db
-#     ports:
-#       - "8081:80"
-#     volumes:
-#       - wp_data:/var/www/html
-#     environment:
-#       WORDPRESS_DB_HOST: db:3306
-#       WORDPRESS_DB_USER: wpuser
-#       WORDPRESS_DB_PASSWORD: wppassword
-#       WORDPRESS_DB_NAME: wordpress
-#     networks:
-#       - wordpress-net
-#     restart: unless-stopped
-# 
-# volumes:
-#   db_data:
-#   wp_data:
-# 
-# networks:
-#   wordpress-net:
-#     driver: bridge
+# C. Maak podman-compose.yml:
+cat > podman-compose.yml << 'EOF'
+version: '3.8'
+services:
+  nginxJens:
+    build:
+      context: ./dockerfileJens
+      dockerfile: Containerfile
+    ports:
+      - "9000:80"
+    volumes:
+      - ~/nginxjf:/usr/share/nginx/html:Z
+EOF
 
+# D. Maak volume directory en index.html:
+mkdir -p ~/nginxjf
+echo "<h1>Jens Fripont</h1>" > ~/nginxjf/index.html
 
-# OPGAVE 5:
-# Start de WordPress stack en verifieer dat alles werkt.
-#
-# OPLOSSING:
-cd ~/wordpress-stack
+# E. Start met podman-compose:
 podman-compose up -d
-
-# Verificatie:
-podman-compose ps
-podman network ls
-podman volume ls
-
-# Test WordPress:
-# Open browser: http://<server-ip>:8081
-# Volg WordPress setup wizard
-
-
-# OPGAVE 6:
-# Bekijk de logs van de containers in de compose stack.
-#
-# OPLOSSING:
-cd ~/wordpress-stack
-
-# Logs van alle services:
-podman-compose logs
-
-# Logs van specifieke service:
-podman-compose logs wordpress
-podman-compose logs db
-
-# Follow mode (real-time):
-podman-compose logs -f
-
-# Laatste 50 regels:
-podman-compose logs --tail=50
-
-
-# OPGAVE 7:
-# Stop en verwijder de compose stack (maar behoud volumes).
-#
-# OPLOSSING:
-cd ~/wordpress-stack
-
-# Stop containers:
-podman-compose stop
-
-# Stop en verwijder containers (volumes blijven):
-podman-compose down
-
-# Verificatie:
-podman-compose ps
-podman volume ls  # Volumes zijn nog aanwezig
-
-
-# OPGAVE 8:
-# Verwijder de compose stack inclusief volumes.
-#
-# OPLOSSING:
-cd ~/wordpress-stack
-
-# Verwijder alles inclusief volumes:
-podman-compose down -v
-
-# Verificatie:
-podman volume ls  # Volumes zijn verwijderd
-
-
-# OPGAVE 9:
-# Maak een compose file voor een development environment met:
-# - Redis cache
-# - PostgreSQL database
-# - Node.js applicatie container
-#
-# OPLOSSING:
-# A. Directory maken:
-mkdir -p ~/dev-stack
-cd ~/dev-stack
-
-# B. docker-compose.yml:
-nano docker-compose.yml
-
-# Inhoud:
-# version: '3.8'
-# 
-# services:
-#   redis:
-#     image: docker.io/library/redis:alpine
-#     container_name: dev-redis
-#     ports:
-#       - "6379:6379"
-#     volumes:
-#       - redis_data:/data
-#     networks:
-#       - dev-net
-#     command: redis-server --appendonly yes
-# 
-#   postgres:
-#     image: docker.io/library/postgres:15
-#     container_name: dev-postgres
-#     environment:
-#       POSTGRES_USER: devuser
-#       POSTGRES_PASSWORD: devpass
-#       POSTGRES_DB: devdb
-#     volumes:
-#       - postgres_data:/var/lib/postgresql/data
-#     ports:
-#       - "5432:5432"
-#     networks:
-#       - dev-net
-# 
-#   app:
-#     image: docker.io/library/node:18-alpine
-#     container_name: dev-app
-#     working_dir: /app
-#     volumes:
-#       - ./app:/app
-#     ports:
-#       - "3000:3000"
-#     networks:
-#       - dev-net
-#     depends_on:
-#       - redis
-#       - postgres
-#     command: sh -c "npm install && npm start"
-#     environment:
-#       REDIS_HOST: redis
-#       REDIS_PORT: 6379
-#       POSTGRES_HOST: postgres
-#       POSTGRES_PORT: 5432
-#       POSTGRES_USER: devuser
-#       POSTGRES_PASSWORD: devpass
-#       POSTGRES_DB: devdb
-# 
-# volumes:
-#   redis_data:
-#   postgres_data:
-# 
-# networks:
-#   dev-net:
-#     driver: bridge
-
-
-# OPGAVE 10:
-# Scale een service in een compose stack (meerdere replica's).
-#
-# OPLOSSING:
-# A. Compose file met scalable service:
-nano docker-compose.yml
-
-# Inhoud:
-# version: '3.8'
-# services:
-#   web:
-#     image: docker.io/library/nginx:alpine
-#     ports:
-#       - "8080-8085:80"
-
-# B. Start met scaling:
-podman-compose up -d --scale web=3
-
-# Verificatie:
-podman-compose ps
-podman ps
-
-
-# OPGAVE 11:
-# Gebruik environment variables in compose file.
-#
-# OPLOSSING:
-# A. .env bestand maken:
-cd ~/compose-demo
-nano .env
-
-# Inhoud:
-# NGINX_PORT=8080
-# NGINX_VERSION=latest
-# PROJECT_NAME=myproject
-
-# B. docker-compose.yml aanpassen:
-nano docker-compose.yml
-
-# Inhoud:
-# version: '3.8'
-# services:
-#   web:
-#     image: docker.io/library/nginx:${NGINX_VERSION}
-#     container_name: ${PROJECT_NAME}-web
-#     ports:
-#       - "${NGINX_PORT}:80"
-
-# C. Start stack:
-podman-compose up -d
-
-
-# OPGAVE 12:
-# Maak een health check voor een service in compose.
-#
-# OPLOSSING:
-nano docker-compose.yml
-
-# Inhoud:
-# version: '3.8'
-# services:
-#   web:
-#     image: docker.io/library/nginx:latest
-#     healthcheck:
-#       test: ["CMD", "curl", "-f", "http://localhost"]
-#       interval: 30s
-#       timeout: 10s
-#       retries: 3
-#       start_period: 40s
-#     ports:
-#       - "8080:80"
-
-# Start en check health:
-podman-compose up -d
-podman inspect <container-id> | grep -A 20 Health
-
-
-# OPGAVE 13:
-# Rebuild een service zonder de hele stack te herstarten.
-#
-# OPLOSSING:
-cd ~/compose-demo
-
-# Rebuild specifieke service:
-podman-compose up -d --build web
-
-# Of alleen rebuild zonder starten:
-podman-compose build web
-
-
-# OPGAVE 14:
-# Export en backup een compose stack.
-#
-# OPLOSSING:
-cd ~/wordpress-stack
-
-# A. Export compose configuratie:
-podman-compose config > compose-backup.yml
-
-# B. Backup volumes:
-mkdir -p ~/backups
-podman volume export db_data -o ~/backups/db_data.tar
-podman volume export wp_data -o ~/backups/wp_data.tar
-
-# C. Backup complete stack met script:
-nano backup-stack.sh
-# #!/bin/bash
-# COMPOSE_DIR=$(pwd)
-# BACKUP_DIR=~/backups/$(date +%Y%m%d)
-# mkdir -p $BACKUP_DIR
-# cp docker-compose.yml $BACKUP_DIR/
-# podman-compose ps -q | xargs -I {} podman export {} -o $BACKUP_DIR/container-{}.tar
-
-chmod +x backup-stack.sh
-./backup-stack.sh
-
-
-# ============================================
-# OEFENING 8 - TrueNAS & iSCSI Storage
-# ============================================
-
-# OPGAVE 1:
-# Installeer de benodigde iSCSI initiator tools op RHEL.
-#
-# OPLOSSING:
-sudo dnf install -y iscsi-initiator-utils
-
-# Verificatie:
-rpm -q iscsi-initiator-utils
-systemctl status iscsid
-
-
-# OPGAVE 2:
-# Configureer de iSCSI initiator op je Linux systeem.
-#
-# OPLOSSING:
-# A. iSCSI initiator naam instellen:
-sudo nano /etc/iscsi/initiatorname.iscsi
-# Voorbeeld inhoud:
-# InitiatorName=iqn.2025-01.com.example:initiator01
-
-# B. iSCSI daemon starten en enablen:
-sudo systemctl enable --now iscsid
-sudo systemctl enable --now iscsi
-
-# C. Verificatie:
-systemctl status iscsid
-cat /etc/iscsi/initiatorname.iscsi
-
-
-# OPGAVE 3:
-# Discover iSCSI targets van TrueNAS server.
-#
-# OPLOSSING:
-# A. Discovery uitvoeren (vervang IP met TrueNAS IP):
-sudo iscsiadm -m discovery -t sendtargets -p 192.168.112.10
-
-# Output toont beschikbare targets:
-# 192.168.112.10:3260,1 iqn.2025-01.com.truenas:target01
-
-# B. Bekijk gevonden targets:
-sudo iscsiadm -m node
-
-# C. Bekijk discovery database:
-sudo iscsiadm -m discovery -P 1
-
-
-# OPGAVE 4:
-# Login op een iSCSI target en mount de storage.
-#
-# OPLOSSING:
-# A. Login op target (vervang met jouw target name):
-sudo iscsiadm -m node -T iqn.2025-01.com.truenas:target01 -p 192.168.112.10 --login
-
-# B. Verificatie nieuwe disk:
-lsblk
-# Zou nieuwe disk moeten tonen (bijv. sdb)
-
-# C. Bekijk session info:
-sudo iscsiadm -m session -P 3
-
-# D. Disk formatteren (indien nieuw):
-sudo fdisk -l /dev/sdb
-sudo mkfs.ext4 /dev/sdb
-
-# E. Mount point maken en mounten:
-sudo mkdir -p /mnt/iscsi-storage
-sudo mount /dev/sdb /mnt/iscsi-storage
 
 # F. Verificatie:
-df -h | grep iscsi
-lsblk
+curl http://localhost:9000
 
 
-# OPGAVE 5:
-# Configureer automatische mount bij boot voor iSCSI storage.
-#
+# 4. Met podman-compose.
+# Pas oefening 3 aan zodat gebruik wordt gemaakt van een eigen netwerk (rootless). 
+# Maak ook gebruik van Visual Studio Code.
+# Stel ook in dat de webpagina beschikbaar is vanaf je Windows 11 host. De container krijgt als IP 10.10.10.10. Maak uiteraard geen gebruik van de GUI.
+# Opgelet: je moet eerst een extern netwerk aanmaken!
+
 # OPLOSSING:
-# A. iSCSI login automatisch maken:
-sudo iscsiadm -m node -T iqn.2025-01.com.truenas:target01 -p 192.168.112.10 --op update -n node.startup -v automatic
+# A. Maak rootless netwerk:
+podman network create --subnet 10.10.10.0/24 mynet
 
-# B. fstab entry toevoegen:
-# Eerst UUID van disk vinden:
-sudo blkid /dev/sdb
+# B. Update podman-compose.yml:
+cat > podman-compose.yml << 'EOF'
+version: '3.8'
+networks:
+  mynet:
+    external: true
+services:
+  nginxJens:
+    build:
+      context: ./dockerfileJens
+      dockerfile: Containerfile
+    networks:
+      mynet:
+        ipv4_address: 10.10.10.10
+    volumes:
+      - ~/nginxjf:/usr/share/nginx/html:Z
+EOF
 
-# fstab aanpassen:
-sudo nano /etc/fstab
-# Toevoegen (vervang UUID):
-# UUID=your-uuid-here  /mnt/iscsi-storage  ext4  _netdev  0 0
+# C. Start met podman-compose:
+podman-compose up -d
 
-# C. Netwerk services enablen:
-sudo systemctl enable iscsi
-sudo systemctl enable iscsid
-
-# D. Test automount:
-sudo umount /mnt/iscsi-storage
-sudo mount -a
-df -h | grep iscsi
+# D. Verificatie vanaf host (SSH tunnel indien nodig):
+curl http://10.10.10.10
 
 
-# OPGAVE 6:
-# Test de performance van de iSCSI storage.
-#
+# 5. Schrijf een containerfile waarbij er een bestand /aanmaakdatum in de image wordt aangemaakt met als inhoud de datum wanneer het image is aangemaakt (maak gebruik van commando date) en je voor- en achternaam in het formaat zoals hieronder staat weergegeven. 
+
+# Je zorgt er uiteraard voor dat je eigen naam wordt weergegeven.
+# Baseer je op ubi10/ubi-image. De image die je aanmaakt moet dateimage<jeinitialen> noemen. 
+# Een container afgeleid van deze image moet blijven draaien, ook als je de optie -it niet meegeeft aan het commando podman.
+# Test dit ook uit. 
+
 # OPLOSSING:
-# A. Write test:
-sudo dd if=/dev/zero of=/mnt/iscsi-storage/testfile bs=1M count=1024 conv=fdatasync
-# Bekijk throughput
+# A. Maak directory:
+mkdir -p oef7-5
+cd oef7-5
 
-# B. Read test:
-sudo sh -c "sync && echo 3 > /proc/sys/vm/drop_caches"
-sudo dd if=/mnt/iscsi-storage/testfile of=/dev/null bs=1M
+# B. Maak Containerfile:
+cat > Containerfile << 'EOF'
+FROM registry.access.redhat.com/ubi10/ubi:latest
+RUN echo "Jens Fripont - $(date)" > /aanmaakdatum
+CMD ["sleep", "infinity"]
+EOF
 
-# C. Met fio (advanced):
-sudo dnf install -y fio
-sudo fio --name=randwrite --ioengine=libaio --iodepth=16 --rw=randwrite --bs=4k --direct=1 --size=1G --numjobs=4 --runtime=60 --group_reporting --directory=/mnt/iscsi-storage
+# C. Bouw image:
+podman build -t dateimagejf .
 
-# D. Cleanup:
-sudo rm /mnt/iscsi-storage/testfile
+# D. Start container (blijft draaien):
+podman run -d --name test-date dateimagejf
 
-
-# OPGAVE 7:
-# Logout van een iSCSI target.
-#
-# OPLOSSING:
-# A. Eerst unmount:
-sudo umount /mnt/iscsi-storage
-
-# B. Logout van target:
-sudo iscsiadm -m node -T iqn.2025-01.com.truenas:target01 -p 192.168.112.10 --logout
-
-# C. Verificatie:
-sudo iscsiadm -m session
-lsblk  # iSCSI disk zou weg moeten zijn
-
-
-# OPGAVE 8:
-# Verwijder een iSCSI target configuratie.
-#
-# OPLOSSING:
-# A. Eerst logout (indien nog ingelogd):
-sudo iscsiadm -m node -T iqn.2025-01.com.truenas:target01 -p 192.168.112.10 --logout
-
-# B. Verwijder node configuratie:
-sudo iscsiadm -m node -T iqn.2025-01.com.truenas:target01 -p 192.168.112.10 --op delete
-
-# C. Verificatie:
-sudo iscsiadm -m node  # Target zou weg moeten zijn
-
-
-# OPGAVE 9:
-# Configureer CHAP authenticatie voor iSCSI (indien TrueNAS dit vereist).
-#
-# OPLOSSING:
-# A. CHAP credentials instellen:
-sudo iscsiadm -m node -T iqn.2025-01.com.truenas:target01 -p 192.168.112.10 --op update -n node.session.auth.authmethod -v CHAP
-
-sudo iscsiadm -m node -T iqn.2025-01.com.truenas:target01 -p 192.168.112.10 --op update -n node.session.auth.username -v iscsi-user
-
-sudo iscsiadm -m node -T iqn.2025-01.com.truenas:target01 -p 192.168.112.10 --op update -n node.session.auth.password -v SecretPassword
-
-# B. Login met CHAP:
-sudo iscsiadm -m node -T iqn.2025-01.com.truenas:target01 -p 192.168.112.10 --login
-
-# C. Verificatie:
-sudo iscsiadm -m session -P 3 | grep -i auth
-
-
-# OPGAVE 10:
-# Maak een multipath configuratie voor redundante iSCSI paden (indien meerdere NICs).
-#
-# OPLOSSING:
-# A. Multipath installeren:
-sudo dnf install -y device-mapper-multipath
-
-# B. Multipath configuratie genereren:
-sudo mpathconf --enable --with_multipathd y
-
-# C. multipath.conf aanpassen:
-sudo nano /etc/multipath.conf
-# Toevoegen:
-# defaults {
-#     user_friendly_names yes
-#     find_multipaths yes
-# }
-
-# D. Service starten:
-sudo systemctl enable --now multipathd
-
-# E. Multipath devices bekijken:
-sudo multipath -ll
-
-# F. Login op beide paden (2 IPs):
-sudo iscsiadm -m node -T iqn.2025-01.com.truenas:target01 -p 192.168.112.10 --login
-sudo iscsiadm -m node -T iqn.2025-01.com.truenas:target01 -p 192.168.113.10 --login
-
-# G. Verificatie:
-sudo multipath -ll
-lsblk
-
-
-# OPGAVE 11:
-# TrueNAS basic setup - Maak een storage pool (via WebUI instructies).
-#
-# OPLOSSING (Conceptueel - via TrueNAS WebUI):
-# A. Log in op TrueNAS WebUI: https://<truenas-ip>
-#    Default: admin / wachtwoord ingesteld bij installatie
-
-# B. Ga naar: Storage > Pools
-
-# C. Klik "Add" en selecteer "Create new pool"
-
-# D. Pool configuratie:
-#    - Name: tank (of eigen naam)
-#    - Select disks (minimaal 1)
-#    - Layout kiezen: Stripe, Mirror, RAIDZ1, RAIDZ2
-#    - Klik "Create"
-
-# E. Verificatie in terminal (indien SSH toegang):
-# ssh root@truenas-ip
-# zpool status
-# zfs list
-
-
-# OPGAVE 12:
-# Maak een iSCSI extent en target op TrueNAS (via WebUI).
-#
-# OPLOSSING (via TrueNAS WebUI):
-# A. Maak Dataset:
-#    - Storage > Pools > tank > Add Dataset
-#    - Name: iscsi-data
-#    - Share Type: Generic
-
-# B. Maak iSCSI Extent:
-#    - Sharing > iSCSI > Extents > Add
-#    - Name: extent01
-#    - Type: Device
-#    - Device: /mnt/tank/iscsi-data
-#    - Disk Extent Size: 10 GiB
-
-# C. Maak iSCSI Portal:
-#    - Portals > Add
-#    - Listen: 0.0.0.0:3260
-
-# D. Maak iSCSI Initiator (optioneel voor beveiliging):
-#    - Initiators > Add
-#    - Initiators: iqn.2025-01.com.example:initiator01
-
-# E. Maak iSCSI Target:
-#    - Targets > Add
-#    - Target Name: target01
-#    - Portal Group: 1
-#    - Initiator Group: 1 (of None voor open toegang)
-
-# F. Koppel Extent aan Target:
-#    - Associated Targets > Add
-#    - Target: target01
-#    - Extent: extent01
-
-# G. Enable iSCSI service:
-#    - Services > iSCSI > Enable
-
-
-# OPGAVE 13:
-# Troubleshooting: Check iSCSI verbindingsproblemen.
-#
-# OPLOSSING:
-# A. Check firewall op TrueNAS:
-# - WebUI: Network > Firewall
-# - Port 3260 moet open zijn
-
-# B. Check op Linux client:
-# Service status:
-sudo systemctl status iscsid
-sudo systemctl status iscsi
-
-# Logs bekijken:
-sudo journalctl -u iscsid -f
-sudo journalctl -u iscsi -f
-
-# C. Test netwerk connectiviteit:
-ping 192.168.112.10
-telnet 192.168.112.10 3260
-
-# D. Check discovery opnieuw:
-sudo iscsiadm -m discovery -t sendtargets -p 192.168.112.10 -P 1
-
-# E. Check initiator name match:
-cat /etc/iscsi/initiatorname.iscsi
-# Vergelijk met TrueNAS initiator configuratie
-
-# F. Reset discovery database (als laatste optie):
-sudo iscsiadm -m node --logout
-sudo rm -rf /var/lib/iscsi/nodes/*
-sudo systemctl restart iscsid
-
-
-# ============================================
-# EINDE ALLE OEFENINGEN
-# ============================================
+# E. Verificatie:
+podman ps | grep test-date
+podman exec test-date cat /aanmaakdatum
