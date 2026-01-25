@@ -775,60 +775,81 @@ podman search pihole
 
 # OPLOSSING:
 
-# Create data directories
-sudo mkdir -p /dataJF/conf /dataJF/logs
-sudo chown root:root /dataJF/conf /dataJF/logs
-sudo chmod 700 /dataJF/conf /dataJF/logs
+# OPLOSSING die vanaf de eerste keer werkt:
 
-# A. Pi-hole container starten met host netwerk en Google DNS forwarding:
-sudo podman run -d --network host --name piholejf \
-  -v /dataJF/conf:/etc/pihole \
-  -v /dataJF/logs:/var/log/pihole \
-  -e TZ='Europe/Brussels' \
-  -e PIHOLE_DNS1=8.8.8.8 \
-  -e PIHOLE_DNS2=8.8.4.4 \
-  docker.io/pihole/pihole:latest
+# 1. Zorg dat poort 53 vrij is en server heeft werkende DNS voor opstart
+sudo systemctl stop systemd-resolved 2>/dev/null
+sudo systemctl disable systemd-resolved 2>/dev/null
+echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
 
-# Wacht even tot container volledig opgestart is
-sleep 30
-
-# B. Firewall aanpassen voor web interface (poort 80) en DNS (poort 53):
+# 2. Firewall aanpassen VOOR container start
 sudo firewall-cmd --add-port=80/tcp --permanent
 sudo firewall-cmd --add-port=53/udp --permanent
 sudo firewall-cmd --add-port=53/tcp --permanent
 sudo firewall-cmd --reload
 
-# C. Verificatie dat container draait:
+# 3. A. Pi-hole container starten met host netwerk en Google DNS forwarding:
+# OPMERKING: Gebruik dubbele streepjes voor podman opties
+sudo podman run -d \
+  --network host \
+  --name piholejf \
+  -e TZ='Europe/Brussels' \
+  -e PIHOLE_DNS_='8.8.8.8;8.8.4.4' \
+  -e FTLCONF_dns_listeningMode='all' \
+  -e WEBPASSWORD='Pass1234' \
+  --cap-add=NET_ADMIN \
+  --restart=unless-stopped \
+  docker.io/pihole/pihole:latest
+
+# 4. Wacht langer tot container volledig opgestart is (Pi-hole heeft tijd nodig voor gravity database)
+echo "Wachten op Pi-hole initialisatie (kan 2-3 minuten duren)..."
+sleep 180
+
+# 5. Verificatie dat container draait en check logs:
 sudo podman ps | grep piholejf
+echo "=== Pi-hole logs ==="
+sudo podman logs piholejf | tail -20
 
-# D. Controleer dat data opgeslagen is in de volumes:
-ls -la /dataJF/conf
-ls -la /dataJF/logs
+# 6. Check of Pi-hole services draaien in container:
+echo "=== Pi-hole status ==="
+sudo podman exec piholejf pihole status 2>/dev/null || echo "Pi-hole status check mislukt, wacht nog even..."
 
-# E. Web interface openen (vereist DNS configuratie voor serverJF.lan):
-# Eerst /etc/hosts aanpassen voor lokale DNS:
+# 7. /etc/hosts aanpassen voor lokale DNS:
 echo "127.0.0.1 serverJF.lan" | sudo tee -a /etc/hosts
 
-# Open browser naar: http://serverJF.lan/admin
-# Default wachtwoord: verander dit via sudo podman logs piholejf | grep "password"
-
-# E. DNS test met nslookup:
-nslookup www.kde.org 127.0.0.1
-# Dit gebruikt Pi-hole als DNS server
-
-# F. Advertentie test:
-# Backup huidige DNS config:
+# 8. Stel Pi-hole in als DNS server op de host:
 sudo cp /etc/resolv.conf /etc/resolv.conf.backup
-
-# Stel Pi-hole in als DNS server:
 echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf
 
-# Verificatie dat Pi-hole ad blocking werkt:
-nslookup doubleclick.net 127.0.0.1
-# Zou 0.0.0.0 moeten retourneren voor geblokkeerde domeinen
+# 9. DNS test met nslookup:
+echo "=== DNS test: nslookup www.kde.org ==="
+nslookup www.kde.org 127.0.0.1
 
-# Open browser naar: https://fuzzthepiguy.tech/adtest/
-# Controleer dat er geen advertenties worden getoond
+# 10. Verificatie dat Pi-hole ad blocking werkt:
+echo "=== Ad blocking test: nslookup doubleclick.net ==="
+nslookup doubleclick.net 127.0.0.1
+
+# 11. Web interface toegang testen:
+echo "=== Web interface test ==="
+echo "Open browser naar: http://serverJF.lan/admin"
+echo "Login wachtwoord: Pass1234"
+echo "Of vind wachtwoord met: sudo podman logs piholejf | grep 'password'"
+
+# 12. Test commando om te controleren of Pi-hole DNS werkt:
+echo "=== Test Pi-hole functionaliteit ==="
+echo "Test gewone site:"
+nslookup google.com 127.0.0.1
+echo ""
+echo "Test geblokkeerde site (zou 0.0.0.0 moeten zijn):"
+nslookup ads.example.com 127.0.0.1
+
+# 13. Instructies voor advertentie test:
+echo ""
+echo "=== Voor advertentie test: ==="
+echo "1. Open browser op ServerJF"
+echo "2. Ga naar: https://fuzzthepiguy.tech/adtest/"
+echo "3. Controleer dat er geen advertenties worden getoond"
+echo "4. DNS instellingen zijn al aangepast naar Pi-hole (127.0.0.1)"
 
 # Herstel DNS config:
 sudo mv /etc/resolv.conf.backup /etc/resolv.conf
@@ -945,22 +966,33 @@ sudo podman network rm macvlan-net
 # 1.	Voor deze oefening pas je oefening 3 (i.v.m. Pi-hole) van oefening 5 Podman networks aan. Maak nu gebruik van een gekoppeld volume voor configuratie en logs. Deze gegevens wordt bewaard in /data<jeintialen> met de submappen conf en logs. Alleen de root mag toegang hebben tot deze gegevens. Zorg ervoor dat Pi-hole als enige toegang heeft als container tot deze data. Laat ook zien dat er daadwerkelijk data op de containerhost opgeslagen in in die 2 mappen.
 
 # OPLOSSING:
-# A. Maak data directory aan met juiste permissies (alleen root toegang):
+# 1. Stop systemd-resolved als het draait (blokkeert poort 53)
+sudo systemctl stop systemd-resolved 2>/dev/null
+sudo systemctl disable systemd-resolved 2>/dev/null
+echo "nameserver 8.8.8.8" | sudo tee /etc/resolv.conf
+
+# A. Maak data directory aan met juiste permissies (ALLEEN root toegang):
 sudo mkdir -p /dataJF/conf /dataJF/logs
 sudo chown root:root /dataJF/conf /dataJF/logs
-sudo chmod 700 /dataJF/conf /dataJF/logs
+sudo chmod 700 /dataJF/conf /dataJF/logs  # 700 = alleen root rechten
 
-# B. Pi-hole container starten met gekoppelde volumes (bound mounts) in plaats van named volumes:
+# B. Pi-hole container starten met gekoppelde volumes (bound mounts):
 sudo podman run -d --network host --name piholejf \
   -v /dataJF/conf:/etc/pihole:Z \
   -v /dataJF/logs:/var/log/pihole:Z \
   -e TZ='Europe/Brussels' \
-  -e PIHOLE_DNS1=8.8.8.8 \
-  -e PIHOLE_DNS2=8.8.4.4 \
+  -e PIHOLE_DNS_='8.8.8.8;8.8.4.4' \
+  -e WEBPASSWORD='Pass1234' \
+  -e FTLCONF_dns_listeningMode='all' \
+  -e PIHOLE_UID=0 \  # Draai als root in container voor compatibiliteit
+  -e PIHOLE_GID=0 \
+  --cap-add=NET_ADMIN \
+  --user=0:0 \  # Forceer root gebruiker in container
   docker.io/pihole/pihole:latest
 
-# Wacht even tot container volledig opgestart is
-sleep 30
+# Wacht even tot container volledig opgestart is (Pi-hole heeft tijd nodig)
+echo "Wachten op Pi-hole initialisatie..."
+sleep 120
 
 # C. Firewall aanpassen voor web interface (poort 80) en DNS (poort 53):
 sudo firewall-cmd --add-port=80/tcp --permanent
@@ -972,23 +1004,44 @@ sudo firewall-cmd --reload
 sudo podman ps | grep piholejf
 
 # E. Controleer dat data daadwerkelijk opgeslagen wordt in de host mappen:
-ls -la /dataJF/conf
-ls -la /dataJF/logs
+echo "=== Inhoud /dataJF/conf ==="
+sudo ls -la /dataJF/conf/
+echo ""
+echo "=== Inhoud /dataJF/logs ==="
+sudo ls -la /dataJF/logs/
 
 # F. Toon dat alleen root toegang heeft (andere gebruikers kunnen niet lezen):
-sudo -u student ls /dataJF/conf  # Zou toegang geweigerd moeten worden
-sudo -u student ls /dataJF/logs  # Zou toegang geweigerd moeten worden
+echo "=== Toegang test voor niet-root gebruiker ==="
+echo "Test 1: Directory permissions"
+ls -ld /dataJF/conf /dataJF/logs
+echo ""
+
+echo "Test 2: Probeer te lezen als student gebruiker"
+sudo -u student ls -la /dataJF/conf 2>&1 | head -1
+echo ""
+
+echo "Test 3: Probeer te lezen als nobody gebruiker"
+sudo -u nobody ls -la /dataJF/logs 2>&1 | head -1
+echo ""
+
+echo "Test 4: Probeer bestand te maken als niet-root"
+sudo -u nobody touch /dataJF/conf/test.txt 2>&1 | head -1
+echo ""
+
+echo "Test 5: Check eigenaar van bestanden"
+sudo ls -la /dataJF/conf/ | head -3
+echo ""
 
 # G. Web interface openen (vereist DNS configuratie voor serverJF.lan):
 # Eerst /etc/hosts aanpassen voor lokale DNS:
 echo "127.0.0.1 serverJF.lan" | sudo tee -a /etc/hosts
 
 # Open browser naar: http://serverJF.lan/admin
-# Default wachtwoord: verander dit via sudo podman logs piholejf | grep "password"
+# Wachtwoord: Pass1234
 
 # H. DNS test met nslookup:
+echo "=== DNS test ==="
 nslookup www.kde.org 127.0.0.1
-# Dit gebruikt Pi-hole als DNS server
 
 # I. Advertentie test:
 # Backup huidige DNS config:
@@ -998,15 +1051,34 @@ sudo cp /etc/resolv.conf /etc/resolv.conf.backup
 echo "nameserver 127.0.0.1" | sudo tee /etc/resolv.conf
 
 # Verificatie dat Pi-hole ad blocking werkt:
+echo "=== Ad blocking test ==="
 nslookup doubleclick.net 127.0.0.1
-# Zou 0.0.0.0 moeten retourneren voor geblokkeerde domeinen
+
+# OPTIONEEL: Verwijder test bestanden
+sudo rm -f /dataJF/conf/test.txt 2>/dev/null
 
 # Open browser naar: https://fuzzthepiguy.tech/adtest/
 # Controleer dat er geen advertenties worden getoond
 
-# Herstel DNS config:
-sudo mv /etc/resolv.conf.backup /etc/resolv.conf
+# Extra verificatie:
+echo "=== Extra volume verificatie ==="
+echo "1. Check of bestanden worden gesynchroniseerd:"
+sudo podman exec piholejf touch /etc/pihole/test_from_container.txt
+sleep 2
+echo "Bestand op host:"
+sudo ls -la /dataJF/conf/test_from_container.txt
 
+echo "2. Check container gebruiker toegang:"
+sudo podman exec piholejf ls -la /etc/pihole/
+
+echo "3. Check log schrijven:"
+sudo podman exec piholejf echo "Test log entry" >> /var/log/pihole/pihole.log
+sleep 2
+echo "Laatste regel van log op host:"
+sudo tail -1 /dataJF/logs/pihole.log 2>/dev/null || echo "Log bestand nog niet aangemaakt"
+
+# OPTIONEEL: Herstel DNS config (alleen als je Pi-hole niet als permanente DNS wilt):
+# sudo mv /etc/resolv.conf.backup /etc/resolv.conf
 
 # 2.	Zet een Jellyfin Media Server op in Podman op Server<jeintialen>. 
 # Maak gebruik van het image van jellyfin/jellyfin.
@@ -1023,7 +1095,9 @@ sudo mv /etc/resolv.conf.backup /etc/resolv.conf
 
 
 # OPLOSSING:
-# Create named volumes for media and configuration
+# ============================================
+# STEP 1: Create named volumes
+# ============================================
 sudo podman volume create mediaJF
 sudo podman volume create configuratieJF
 
@@ -1032,7 +1106,19 @@ sudo podman volume ls
 sudo podman volume inspect mediaJF
 sudo podman volume inspect configuratieJF
 
-# Create macvlan network for container networking
+# ============================================
+# STEP 2: Prepare network interfaces
+# ============================================
+
+# Enable promiscuous mode on parent interface
+sudo ip link set ens160 promisc on
+
+# Verify promiscuous mode is enabled
+ip link show ens160 | grep PROMISC
+
+# ============================================
+# STEP 3: Create macvlan network
+# ============================================
 sudo podman network create \
   --driver macvlan \
   -o parent=ens160 \
@@ -1040,8 +1126,26 @@ sudo podman network create \
   --gateway 192.168.112.1 \
   macvlanJF
 
-# Pull and run Jellyfin container with static IP on macvlan network
+# Verify macvlan network
+sudo podman network inspect macvlanJF
+
+# ============================================
+# STEP 4: Create macvlan interface on HOST
+# ============================================
+# This is CRITICAL for host-to-container communication on macvlan
+
+sudo ip link add mvlan0 link ens160 type macvlan mode bridge
+sudo ip addr add 192.168.112.102/24 dev mvlan0
+sudo ip link set mvlan0 up
+
+# Verify host macvlan interface
+ip addr show mvlan0
+
+# ============================================
+# STEP 5: Pull and run Jellyfin container
+# ============================================
 sudo podman pull docker.io/jellyfin/jellyfin:latest
+
 sudo podman run -d \
   --name jellyfinJF \
   --network macvlanJF \
@@ -1051,27 +1155,43 @@ sudo podman run -d \
   --restart=always \
   docker.io/jellyfin/jellyfin:latest
 
-# Add host macvlan interface for connectivity
-sudo ip link add mvlan0 link ens160 type macvlan mode bridge
-sudo ip addr add 192.168.112.102/24 dev mvlan0
-sudo ip link set mvlan0 up
+# Wait for container to fully start
+sleep 15
 
-# Test connectivity to container
+# Verify container is running
+sudo podman ps
+
+# ============================================
+# STEP 6: Test connectivity
+# ============================================
 ping -c 3 192.168.112.101
 
-# Make host macvlan persistent via NetworkManager
-sudo nmcli connection add type macvlan ifname mvlan0 dev ens160 mode bridge ip4 192.168.112.102/24
-sudo nmcli connection up mvlan0
+# Test HTTP connectivity
+curl -I http://192.168.112.101:8096
 
-# Add a penguin photo to the media volume
+# ============================================
+# STEP 7: Make macvlan interface persistent
+# ============================================
+sudo nmcli connection add type macvlan ifname mvlan0 dev ens160 mode bridge ip4 192.168.112.102/24 gw4 192.168.112.1
+sudo nmcli connection up macvlan0
+
+# ============================================
+# STEP 8: Add penguin photo to media volume
+# ============================================
 MP=$(sudo podman volume inspect mediaJF -f '{{.Mountpoint}}')
+
+# Create Pictures directory
 sudo mkdir -p "$MP/Pictures"
 
-# Download a royalty-free penguin photo to the media volume
+# Copy penguin photo (ensure /home/student/pinguin.jpg exists)
 sudo cp /home/student/pinguin.jpg "$MP/Pictures/penguin.jpg"
+
+# Set proper permissions for Jellyfin to read
+sudo chmod -R 777 "$MP/Pictures"
 
 # Verify the file
 sudo ls -lh "$MP/Pictures/"
+sudo podman exec jellyfinJF ls -lh /media/Pictures/
 
 # Setup Jellyfin: Open browser on ServerJF to http://192.168.112.101:8096
 # Complete initial setup (language, admin user, password)
@@ -1212,44 +1332,73 @@ curl http://localhost:8080
 
 # Gebruik dezelfde containernaam. Gebruik nu poort 9000 op de containerhost. Laat zeker een screenshot zoals onderstaande (niet vervaagd uiteraard).
 
-# OPLOSSING:
-# A. Maak directory structuur:
-mkdir -p oef7-3
-cd oef7-3
-mkdir -p dockerfileJens
+# 1. Maak project directory
+cd ~
+rm -rf nginx-jens 2>/dev/null
+mkdir -p nginx-jens/html
+cd nginx-jens
 
-# B. Maak Containerfile in dockerfileJens:
-cat > dockerfileJens/Containerfile << 'EOF'
-FROM registry.access.redhat.com/ubi10/ubi:latest
-RUN dnf install -y nginx && dnf clean all
+# 2. Maak HTML bestand met voor- en achternaam
+echo "Jens Fripont" > html/index.html
+
+# 3. Maak Containerfile
+cat > Containerfile << 'EOF'
+# Start van ubi10/ubi zoals vereist in opgave
+FROM registry.access.redhat.com/ubi10/ubi
+
+# Metadata
+LABEL author="Jens Fripont"
+LABEL description="Nginx container voor oefening 3"
+
+# Installeer nginx
+RUN dnf install -y nginx && \
+    dnf clean all
+
+# Maak directory voor HTML content
+RUN mkdir -p /usr/share/nginx/html
+
+# Kopieer HTML content van host naar container (COPY ipv volume)
+COPY html/index.html /usr/share/nginx/html/
+
+# Zorg voor correcte permissions
+RUN chmod 644 /usr/share/nginx/html/index.html
+
+# Expose poort 80
 EXPOSE 80
+
+# Start nginx in foreground
 CMD ["nginx", "-g", "daemon off;"]
 EOF
 
-# C. Maak podman-compose.yml:
-cat > podman-compose.yml << 'EOF'
+# 4. Maak docker-compose.yml
+cat > docker-compose.yml << 'EOF'
 version: '3.8'
+
 services:
-  nginxJens:
-    build:
-      context: ./dockerfileJens
-      dockerfile: Containerfile
+  nginxjens:
+    build: .
+    container_name: nginxjens
     ports:
-      - "9000:80"
-    volumes:
-      - ~/nginxjf:/usr/share/nginx/html:Z
+      - "9000:80"    # Poort 9000 op containerhost zoals vereist
+    restart: unless-stopped
 EOF
 
-# D. Maak volume directory en index.html:
-mkdir -p ~/nginxjf
-echo "<h1>Jens Fripont</h1>" > ~/nginxjf/index.html
+# 5. Build image via podman-compose
+echo "=== Building image via podman-compose ==="
+podman-compose build
 
-# E. Start met podman-compose:
+# 6. Start container via podman-compose
+echo "=== Starting container ==="
 podman-compose up -d
 
-# F. Verificatie:
-curl http://localhost:9000
+# 7. Wacht voor opstart
+echo "Wachten op container opstart..."
+sleep 3
 
+# 8. Test met curl (vereist in opgave)
+echo ""
+echo "=== TEST MET CURL ==="
+curl localhost:9000
 
 # 4. Met podman-compose.
 # Pas oefening 3 aan zodat gebruik wordt gemaakt van een eigen netwerk (rootless). 
@@ -1258,33 +1407,108 @@ curl http://localhost:9000
 # Opgelet: je moet eerst een extern netwerk aanmaken!
 
 # OPLOSSING:
-# A. Maak rootless netwerk:
-podman network create --subnet 10.10.10.0/24 mynet
+# =============================================
+# OEFENING 4: Podman Compose met eigen netwerk
+# =============================================
 
-# B. Update podman-compose.yml:
-cat > podman-compose.yml << 'EOF'
-version: '3.8'
-networks:
-  mynet:
-    external: true
-services:
-  nginxJens:
-    build:
-      context: ./dockerfileJens
-      dockerfile: Containerfile
-    networks:
-      mynet:
-        ipv4_address: 10.10.10.10
-    volumes:
-      - ~/nginxjf:/usr/share/nginx/html:Z
+# 1. Maak project directory
+cd ~
+rm -rf nginx-jens-network 2>/dev/null
+mkdir -p nginx-jens-network/html
+cd nginx-jens-network
+
+# 2. Maak HTML bestand met voor- en achternaam
+echo "Jens Fripont" > html/index.html
+
+# 3. Maak een extern rootless netwerk aan (vereist voor opgave)
+echo "=== Aanmaken rootless netwerk ==="
+podman network create \
+  --subnet 10.10.0.0/16 \
+  --ip-range 10.10.10.0/24 \
+  --gateway 10.10.0.1 \
+  nginx-jens-network
+
+# 4. Toon netwerk informatie
+echo "=== Netwerk informatie ==="
+podman network inspect nginx-jens-network
+
+# 5. Maak Containerfile
+cat > Containerfile << 'EOF'
+# Start van ubi10/ubi
+FROM registry.access.redhat.com/ubi10/ubi
+
+# Metadata
+LABEL maintainer="Jens Fripont"
+LABEL description="Nginx met custom netwerk configuratie"
+
+# Installeer nginx
+RUN dnf install -y nginx && \
+    dnf clean all
+
+# Maak directory voor HTML content
+RUN mkdir -p /usr/share/nginx/html
+
+# Kopieer HTML content
+COPY html/index.html /usr/share/nginx/html/
+
+# Zorg voor correcte permissions
+RUN chmod 644 /usr/share/nginx/html/index.html
+
+# Expose poort 80
+EXPOSE 80
+
+# Start nginx
+CMD ["nginx", "-g", "daemon off;"]
 EOF
 
-# C. Start met podman-compose:
+# 6. Maak docker-compose.yml met eigen netwerk en statisch IP
+cat > docker-compose.yml << 'EOF'
+version: '3.8'
+
+services:
+  nginxjens:
+    build: .
+    container_name: nginxjens
+    image: nginx-jens-network:latest
+    ports:
+      - "9000:80"    # Poort mapping voor Windows 11 toegang
+    networks:
+      nginx-jens-network:
+        ipv4_address: 10.10.10.10  # Statisch IP zoals vereist
+    restart: unless-stopped
+    dns:
+      - 8.8.8.8
+      - 1.1.1.1
+
+networks:
+  nginx-jens-network:
+    external: true
+    name: nginx-jens-network
+EOF
+
+# 7. Build image via podman-compose
+echo ""
+echo "=== Building image ==="
+podman-compose build
+
+# 8. Start container via podman-compose
+echo ""
+echo "=== Starting container ==="
 podman-compose up -d
 
-# D. Verificatie vanaf host (SSH tunnel indien nodig):
-curl http://10.10.10.10
+# 9. Wacht voor opstart
+echo "Wachten op container opstart..."
+sleep 5
 
+# 10. Test vanaf Linux host
+echo ""
+echo "=== TEST VANAF LINUX HOST ==="
+echo "1. Test via localhost:"
+curl -s localhost:9000 
+
+echo ""
+echo "2. Test via container IP 10.10.10.10:"
+curl -s 10.10.10.10 
 
 # 5. Schrijf een containerfile waarbij er een bestand /aanmaakdatum in de image wordt aangemaakt met als inhoud de datum wanneer het image is aangemaakt (maak gebruik van commando date) en je voor- en achternaam in het formaat zoals hieronder staat weergegeven. 
 
@@ -1294,26 +1518,59 @@ curl http://10.10.10.10
 # Test dit ook uit. 
 
 # OPLOSSING:
-# A. Maak directory:
-mkdir -p oef7-5
-cd oef7-5
+mkdir -p ~/oef7-5
+cd ~/oef7-5
+nano Dockerfile
+# Dockerfile voor dateimagejf
+# Base image: ubi10/ubi
+# Auteur: Fripont Jens
+# Datum: $(date)
 
-# B. Maak Containerfile:
-cat > Containerfile << 'EOF'
-FROM registry.access.redhat.com/ubi10/ubi:latest
-RUN echo "Jens Fripont - $(date)" > /aanmaakdatum
-CMD ["sleep", "infinity"]
-EOF
+# Gebruik de officiële UBI 10 base image
+FROM ubi10/ubi:latest
 
-# C. Bouw image:
+# Metadata labels
+LABEL maintainer="12403538@student.pxl.be"
+LABEL description="Image met aanmaakdatum en persoonlijke informatie"
+LABEL version="1.0"
+LABEL created="$(date)"
+
+# Installeer updates en benodigde packages
+RUN dnf update -y --nodocs && \
+    dnf install -y --nodocs procps-ng hostname && \
+    dnf clean all && \
+    rm -rf /var/cache/dnf/*
+
+# Maak het vereiste bestand aan met aanmaakdatum en naam
+# De datum wordt vastgelegd tijdens het build proces
+RUN echo "==========================================" > /aanmaakdatum && \
+    echo "Container Image Informatie" >> /aanmaakdatum && \
+    echo "==========================================" >> /aanmaakdatum && \
+    echo "" >> /aanmaakdatum && \
+    echo "Aanmaakdatum van de image: $(date '+%d-%m-%Y %H:%M:%S')" >> /aanmaakdatum && \
+    echo "Naam: Fripont Jens" >> /aanmaakdatum && \
+# Maak een healthcheck aan (optioneel maar goede practice)
+HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \
+    CMD ps aux | grep -q "[t]ail" || exit 1
+
+# Stel de standaard command in die de container draaiend houdt
+# Gebruik tail -f /dev/null voor een oneindige loop
+CMD ["tail", "-f", "/dev/null"]
+
+# Expose poorten indien nodig (optioneel)
+# EXPOSE 80
+
+# Werkdirectory instellen
+WORKDIR /root
+
+# Environment variables
+ENV IMAGE_NAME="dateimage<jeinitialen>"
+ENV CREATOR="[Jouw Naam]"
+ENV CREATION_DATE="$(date)"
+
 podman build -t dateimagejf .
-
-# D. Start container (blijft draaien):
-podman run -d --name test-date dateimagejf
-
-# E. Verificatie:
-podman ps | grep test-date
-podman exec test-date cat /aanmaakdatum
+podman run -d --name mijncontainerjf dateimagejf
+podman exec -it mijncontainerjf cat /aanmaakdatum
 
 #!/bin/bash
 # Kubernetes Oefeningen Deel 2
