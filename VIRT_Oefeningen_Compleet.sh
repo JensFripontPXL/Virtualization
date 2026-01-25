@@ -1576,6 +1576,157 @@ podman exec -it mijncontainerjf cat /aanmaakdatum
 # Kubernetes Oefeningen Deel 2
 # Initialen: JF (pas aan naar je eigen initialen)
 # ip serverJF : 192.168.112.110
+
+Oefening 8: iSCSI
+1.	We hebben in dit hoofdstuk via iSCSI een remote block device gekoppeld, geformatteerd, gemount, en gebruikt als /mnt/iscsi. Draai dit terug zoals vóór de iSCSI-login op Server<jeinitialen>. Laat zien dat sda verdwenen is. Niet via een snapshot natuurlijk 😉.
+# unmounten 
+sudo umount /dev/sda1
+# verwijderen 
+sudo parted /dev/sda --script rm 1
+
+3.	Maak een SMB-share met de naam <jeinitialen> aan met een lokale user met als naam <jeachternaam> op TrueNAS. Maak verbinding met deze share op Server<jeinitialen>. Maak een webpagina aan die je voor- en achternaam toont in deze SMB-share. Toon via een apache-container dat je webpagina kan getoond worden op de container host.
+# dataset JF aanmaken op TrueNAS, SMB preset 
+# user Fripont aanmaken op TrueNAS met wachtwoord
+# share JF aanmaken op TrueNAS met toegang voor user Fripont, bij acl voeg je user Fripont toe met volledige rechten (wheel)
+
+# === STAP 1: SMB-share mounten ===
+# Maak mount directory
+sudo mkdir -p /mnt/smbjf
+
+# Unmount eerst als al gemount
+sudo umount /mnt/smbjf 2>/dev/null
+
+# Mount SMB share met WORKGROUP (belangrijk!)
+sudo mount -t cifs //10.10.10.22/JF /mnt/smbjf \
+  -o username=fripont,password=Pass1234,vers=3.0,domain=WORKGROUP,uid=$(id -u),gid=$(id -g)
+
+# Alternatief als bovenstaande faalt:
+# sudo mount -t cifs //10.10.10.22/JF /mnt/smbjf \
+#   -o username=fripont,password=Pass1234,vers=2.1,domain=WORKGROUP
+
+# Controleer mount
+mount | grep smb
+df -h | grep smb
+
+# === STAP 2: Samba-client installeren (indien nodig) ===
+sudo dnf install -y samba-client cifs-utils
+
+# === STAP 3: Webpagina aanmaken ===
+echo "<html><body><h1>Jens Fripont</h1></body></html>" | sudo tee /mnt/smbjf/index.html
+
+# Zet correcte permissies
+sudo chmod 644 /mnt/smbjf/index.html
+
+# Controleer
+ls -la /mnt/smbjf/
+cat /mnt/smbjf/index.html
+
+# === STAP 4: Apache container starten (GARANTIE WERKT) ===
+# Stop bestaande containers
+sudo podman stop apache 2>/dev/null
+sudo podman rm apache 2>/dev/null
+
+# Gebruik httpd:alpine (werkt altijd, klein, heeft alle tools)
+sudo podman pull docker.io/library/httpd:alpine
+
+# Start container op poort 8888 (minder kans op conflicten)
+sudo podman run -d --name apache -p 8888:80 \
+  -v /mnt/smbjf:/usr/local/apache2/htdocs:Z \
+  docker.io/library/httpd:alpine
+
+# Controleer container
+sleep 2
+sudo podman ps
+sudo podman logs apache
+
+# === STAP 5: Firewall configureren ===
+# Open poort 8888 (in plaats van 8080 voor minder conflicten)
+sudo firewall-cmd --add-port=8888/tcp --permanent
+sudo firewall-cmd --reload
+sudo firewall-cmd --list-ports
+
+# === STAP 6: Testen ===
+# Test 1: Directe curl
+curl http://localhost:8888
+
+# Test 2: Met verbose voor debugging
+curl -v http://localhost:8888 2>&1 | head -20
+
+# Test 3: Container IP (alternatieve test)
+CONTAINER_IP=$(sudo podman inspect apache --format '{{.NetworkSettings.IPAddress}}')
+echo "Container IP: $CONTAINER_IP"
+curl http://$CONTAINER_IP
+
+76.	Uitbreidingsoefening 3
+
+Verwijder het zfs-volume op TrueNAS en maak een zfs-volume aan met als naam <jevoornaam> van ongeveer 20 GiB. Dit zfs-volume mag via iSCSI enkel beschikbaar zijn via <jevoornaam> en een wachtwoord dat je zelf kiest op Server<jeintialen>. Maak hiervoor gebruik van CHAP. Laat ook zien dat je verbinding kan maken op ServerXX analoog aan hetgeen hieronder staat.
+# datasets -->> gemaakte zvol klikken en delete kiezen 
+# add zvol met naam Jens van 20GiB
+
+Stap 2 – iSCSI CHAP-gebruiker aanmaken
+
+Ga naar Sharing → Block (iSCSI) → Portals (controleer of een portal bestaat; zo niet, maak er één aan met het juiste IP-adres).
+
+Ga naar Initiators:
+
+Initiators: leeg laten of beperken tot het IP van ServerXX
+
+Authorized Networks: optioneel het subnet van ServerXX
+
+Ga naar Authorized Access.
+
+Klik Add en vul in:
+
+User: jens
+
+Secret: Pass1234Pass1234
+
+Peer User / Peer Secret: leeg laten (tenzij wederzijdse CHAP vereist is)
+
+Opslaan.
+
+Stap 4 – Extent aanmaken
+
+Ga naar Extents → Add.
+
+Vul in:
+
+Extent Type: Device
+
+Device: zvol/tank/<jevoornaam>
+
+Extent Name: <jevoornaam>_extent
+
+Opslaan.
+
+# node updaten 
+sudo iscsiadm -m node \
+  -T iqn.2005-10.org.freenas.ctl:jens \
+  -p 10.10.10.22:3260 \
+  -o new
+
+# chap instellen 
+sudo iscsiadm -m node \
+  -T iqn.2005-10.org.freenas.ctl:jens \
+  -p 10.10.10.22:3260 \
+  --op update -n node.session.auth.authmethod -v CHAP
+
+sudo iscsiadm -m node \
+  -T iqn.2005-10.org.freenas.ctl:jens \
+  -p 10.10.10.22:3260 \
+  --op update -n node.session.auth.username -v jens
+
+sudo iscsiadm -m node \
+  -T iqn.2005-10.org.freenas.ctl:jens \
+  -p 10.10.10.22:3260 \
+  --op update -n node.session.auth.password -v Pass1234Pass1234
+
+sudo iscsiadm -m node \
+  -T iqn.2005-10.org.freenas.ctl:jens \
+  -p 10.10.10.22:3260 \
+  --login
+
+
 # ============================================
 # OEFENING 9: K8S - CLUSTERS
 # ============================================
@@ -1734,6 +1885,7 @@ kubectl apply -f ubi-pod.yaml
 # Haal Apache pod IP op en test vanuit ubi pod
 APACHE_IP=$(kubectl get pod apache -o jsonpath='{.status.podIP}')
 kubectl exec -it ubi-test -c ubi -- sh -c "curl -m 5 -sS http://\$APACHE_IP:8083 || wget -qO- http://\$APACHE_IP:8083 || echo 'FAILED to fetch Apache page from \$APACHE_IP:8083'"
+
 # ============================================
 # OEFENING 11: K8S - KUBECTL
 # ============================================
@@ -3081,3 +3233,27 @@ echo "✓ Namespaces voor organisatie"
 echo "✓ Persistentie met Retain policy"
 echo "✓ DNS service discovery"
 echo "✓ Specifieke image versies"
+
+# ============================================
+Oefening 17: Proxmox VE 
+# ============================================
+
+# OPGAVE
+# 1.	Je wil dat de ISO van Alpine Linux beschikbaar wordt via gedeelde Ceph-opslag. Hoe stel je dit in via de GUI? Bij uitval van één server moet de ISO nog beschikbaar blijven. Je moet niet laten zien hoe je Alpine Linux installeert maar enkel hoe je de ISO installeert in de gedeelde opslag.
+Ceph --> install ceph 
+# 2.	- Voeg een SCSI-schijf van 3000 GB toe aan elke server. 
+# - Voeg deze toe aan de Ceph-opslag. 
+# - Je mag na de installatie van de schijven Proxmox niet herstarten. 
+# - Laat de grootte voor en na van Pool1 zien.
+
+# 3.	Maak een back-up van een VM die je de naam alpine<jeintialen> geeft (hoe die ingesteld is maakt niet uit) naar een Cephfs-storage. Kies voor snelle compressie.
+
+# 4.	- Maak een fedora 42 CT container aan met de naam fedlinux<jeinitialen>. 
+# - Maak enkel een screenshot van het venster voordat je Finish klikt over de installatie van fedlinux<jeintialen>. 
+# - Waar je deze container aanmaakt speelt geen rol.
+# - Start de container op en maar er een webserver van. 
+# - De webpagina toont jouw voornaam.
+# - Laat je resultaat zien.
+# - Stel proxmox zodanig in dat ENKEL poort 80 wordt doorgelaten voor de container. 
+# - Laat ook zien hoe dat je alles blokkeert (ook poort 80) en dat de webpagina dan niet beschikbaar is.
+
